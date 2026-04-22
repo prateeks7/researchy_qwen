@@ -1,2 +1,25 @@
-/nlp
-/research_agent/.env
+# ── Secrets ────────────────────────────────────────────────
+.env
+
+# ── Python ────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.nlp/
+
+# ── Node ──────────────────────────────────────────────────
+node_modules/
+dist/
+*.tsbuildinfo
+
+# ── Local data (auto-generated) ───────────────────────────
+berg_agent/chroma_db/
+berg_agent/papers/
+
+# ── OS junk ───────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDE ───────────────────────────────────────────────────
+.vscode/
+.idea/
