@@ -1,11 +1,4 @@
-"""
-Assembles the Berg agent prompt from named section constants.
-
-To add, remove, or reorder a section: edit SECTIONS_ORDER below.
-To edit a section's content: edit sections.py.
-"""
-
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from src.prompt.sections import (
     IDENTITY,
@@ -15,21 +8,28 @@ from src.prompt.sections import (
     COMPLETENESS,
     FORMAT,
     IDENTITY_ANCHOR,
-    REACT_FORMAT,
+    CONTEXT_LIMITS,
 )
 
-SECTIONS_ORDER = [
-    IDENTITY,          # 1. Who Berg is + hard scope boundaries
-    ABSOLUTE_LAWS,     # 2. LAW 1-4 (no fabrication, tools first, exclusions, verification)
-    GUARDRAILS,        # 3. Injection defense, scope rejection, scale limits
-    WORKFLOW,          # 4. Research procedure
-    COMPLETENESS,      # 5. N-item coverage rule
-    FORMAT,            # 6. Output formatting rules
-    IDENTITY_ANCHOR,   # 7. Identity re-assertion — last thing before the question
-    REACT_FORMAT,      # 8. ReAct variables — always last
+# REACT_FORMAT intentionally excluded — function-calling agent handles tool
+# routing natively via the API's tools parameter, not via prompt text.
+_SYSTEM_SECTIONS = [
+    IDENTITY,
+    ABSOLUTE_LAWS,
+    GUARDRAILS,
+    CONTEXT_LIMITS,
+    WORKFLOW,
+    COMPLETENESS,
+    FORMAT,
+    IDENTITY_ANCHOR,
 ]
 
 
-def build_prompt() -> PromptTemplate:
-    template = "\n\n".join(SECTIONS_ORDER)
-    return PromptTemplate.from_template(template)
+def build_prompt() -> ChatPromptTemplate:
+    system = "\n\n".join(_SYSTEM_SECTIONS)
+    return ChatPromptTemplate.from_messages([
+        ("system", system),
+        MessagesPlaceholder("chat_history"),
+        ("human", "{input}"),
+        MessagesPlaceholder("agent_scratchpad"),
+    ])

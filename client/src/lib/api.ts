@@ -76,6 +76,39 @@ export async function deleteSession(token: string, sessionId: string): Promise<v
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
 
+export async function streamChatMessage(
+  token: string,
+  message: string,
+  sessionId: string,
+  onEvent: (event: SSEEvent) => void,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/chat/stream`, {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ message, session_id: sessionId }),
+  })
+  if (!res.ok || !res.body) {
+    const detail = await res.text().catch(() => res.statusText)
+    onEvent({ type: 'error', message: `${res.status}: ${detail}` })
+    return
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        try { onEvent(JSON.parse(line.slice(6))) } catch { /* ignore malformed */ }
+      }
+    }
+  }
+}
+
 export async function sendMessage(token: string, message: string, sessionId: string): Promise<string> {
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: 'POST',

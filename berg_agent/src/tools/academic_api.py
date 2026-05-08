@@ -2,6 +2,12 @@ import requests
 from langchain_core.tools import tool
 from src.tools.utils.pdf_processor import download_and_parse_pdf
 
+_MAX_QUERY_LEN = 200
+
+def _clean_query(query: str) -> str:
+    q = query.strip().split("\n")[0].strip()
+    return q[:_MAX_QUERY_LEN]
+
 @tool
 def search_semantic_scholar(query: str) -> str:
     """
@@ -9,6 +15,7 @@ def search_semantic_scholar(query: str) -> str:
     Use this to find papers by topic — full PDFs are downloaded on this single call to avoid rate limits.
     Input should be a search topic (e.g., 'Physical AI humanoid' or 'water quality datasets').
     """
+    query = _clean_query(query)
     print(f"🤖 Agent called search_semantic_scholar with query: {query}")
 
     url = "https://api.semanticscholar.org/graph/v1/paper/search"

@@ -94,7 +94,8 @@ class StreamingCallback(BaseCallbackHandler):
         self._loop.call_soon_threadsafe(self._queue.put_nowait, json.dumps(event))
 
     def on_tool_start(self, serialized: dict, input_str: str, **kwargs: Any) -> None:
-        self._emit({"type": "tool", "name": serialized.get("name", "tool")})
+        name = serialized.get("name") or kwargs.get("name", "tool")
+        self._emit({"type": "tool", "name": name})
 
     def on_tool_end(self, output: str, **kwargs: Any) -> None:
         self._emit({"type": "tool_done"})

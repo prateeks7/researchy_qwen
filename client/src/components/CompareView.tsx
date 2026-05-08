@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Send, Timer, Zap, Brain, Sparkles, Wrench } from 'lucide-react'
+import { Send, Timer, Zap, Brain, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { streamCompareModel, saveCompareTurn, type SSEEvent } from '@/lib/api'
 import type { CompareTurn } from '@/types'
@@ -19,15 +19,17 @@ interface ColConfig {
   accent: string
 }
 
+interface ToolLogEntry { name: string; done: boolean }
+
 interface ColState {
   loading: boolean
-  currentTool: string | null
+  toolLog: ToolLogEntry[]
   response: string | null
   timing: number | null
   error: string | null
 }
 
-const EMPTY_COL: ColState = { loading: false, currentTool: null, response: null, timing: null, error: null }
+const EMPTY_COL: ColState = { loading: false, toolLog: [], response: null, timing: null, error: null }
 
 // ── Column config ─────────────────────────────────────────────────────────────
 
@@ -37,23 +39,18 @@ const COLUMNS: ColConfig[] = [
   { key: 'gemini',  label: 'Gemini 2.5 Flash',  sub: 'Google · Multimodal',        icon: Sparkles, accent: 'border-purple-400/50' },
 ]
 
-// Human-readable tool labels shown in typing indicator
-const TOOL_LABELS: Record<string, string> = {
-  search_arxiv_papers:                      'Searching arXiv…',
-  download_and_parse_arxiv_paper:           'Downloading paper…',
-  search_semantic_scholar:                  'Searching Semantic Scholar…',
-  get_paper_citations:                      'Fetching citations…',
-  get_author_papers:                        'Looking up author…',
-  download_and_parse_semantic_scholar_paper:'Downloading paper…',
-  search_pubmed:                            'Searching PubMed…',
-  download_pubmed_paper:                    'Downloading paper…',
-  web_search_tool:                          'Searching web…',
-  search_internal_knowledge:               'Checking knowledge base…',
-  search_paper_details:                     'Reading paper details…',
-}
-
-function toolLabel(name: string): string {
-  return TOOL_LABELS[name] ?? `Calling ${name}…`
+const TOOL_CONFIG: Record<string, { emoji: string; label: string }> = {
+  search_internal_knowledge:                 { emoji: '⚡', label: 'Checking Vector DB' },
+  search_paper_details:                      { emoji: '🔍', label: 'Reading paper details' },
+  search_arxiv_papers:                       { emoji: '📡', label: 'Searching arXiv' },
+  download_and_parse_arxiv_paper:            { emoji: '📥', label: 'Downloading & parsing paper' },
+  search_semantic_scholar:                   { emoji: '🎓', label: 'Searching Semantic Scholar' },
+  get_paper_citations:                       { emoji: '🔗', label: 'Fetching citations' },
+  get_author_papers:                         { emoji: '👤', label: 'Looking up author papers' },
+  download_and_parse_semantic_scholar_paper: { emoji: '📥', label: 'Downloading & parsing paper' },
+  search_pubmed:                             { emoji: '🧬', label: 'Searching PubMed' },
+  download_pubmed_paper:                     { emoji: '📥', label: 'Downloading paper' },
+  web_search_tool:                           { emoji: '🌐', label: 'Searching the web' },
 }
 
 // Strip [FOLLOW_UP] marker — not relevant in compare view
@@ -94,21 +91,48 @@ function ColHeader({ col, state, elapsed }: { col: ColConfig; state: ColState; e
   )
 }
 
-function ThinkingBubble({ tool }: { tool: string | null }) {
+function AnimatedDots() {
   return (
-    <div className="flex flex-col items-start gap-2 px-3 py-4">
-      <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-white/40 border border-black/10 backdrop-blur-sm">
-        <div className="flex gap-1">
-          {[0, 1, 2].map((i) => (
-            <span key={i} className="w-1.5 h-1.5 rounded-full bg-black/35 animate-typing-dot"
-              style={{ animationDelay: `${i * 0.15}s` }} />
-          ))}
-        </div>
-        {tool && (
-          <span className="flex items-center gap-1 text-[11px] text-black/50 italic">
-            <Wrench className="w-3 h-3" />
-            {toolLabel(tool)}
-          </span>
+    <span className="flex gap-0.5">
+      {[0, 1, 2].map((i) => (
+        <span key={i} className="w-1 h-1 rounded-full bg-black/35 animate-typing-dot"
+          style={{ animationDelay: `${i * 0.15}s` }} />
+      ))}
+    </span>
+  )
+}
+
+function ThinkingBubble({ toolLog }: { toolLog: ToolLogEntry[] }) {
+  const allDone = toolLog.length > 0 && toolLog.every((e) => e.done)
+  return (
+    <div className="px-3 py-4">
+      <div className="px-3 py-2.5 rounded-xl bg-white/40 border border-black/10 backdrop-blur-sm min-w-[160px] inline-block">
+        {toolLog.length === 0 ? (
+          <div className="flex items-center gap-2 text-[12px] text-black/50">
+            <span className="font-medium">Thinking</span>
+            <AnimatedDots />
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold text-black/35 uppercase tracking-wider mb-1">Researching</span>
+            {toolLog.map((entry, i) => {
+              const cfg = TOOL_CONFIG[entry.name] ?? { emoji: '🔧', label: entry.name.replace(/_/g, ' ') }
+              const isActive = i === toolLog.length - 1 && !entry.done
+              return (
+                <div key={i} className={cn('flex items-center gap-2 text-[12px] transition-opacity', entry.done ? 'opacity-25' : 'opacity-90')}>
+                  <span className="text-sm leading-none">{cfg.emoji}</span>
+                  <span className={cn('font-medium', entry.done ? 'text-black/50' : 'text-black/80')}>{cfg.label}</span>
+                  {isActive && <AnimatedDots />}
+                </div>
+              )
+            })}
+            {allDone && (
+              <div className="flex items-center gap-2 text-[12px] text-black/40 mt-0.5">
+                <span className="font-medium">Processing</span>
+                <AnimatedDots />
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -162,7 +186,7 @@ function ColBody({
                 </div>
               </div>
               {state.loading ? (
-                <ThinkingBubble tool={state.currentTool} />
+                <ThinkingBubble toolLog={state.toolLog} />
               ) : state.error ? (
                 <div className="px-3">
                   <p className="text-xs text-red-500 italic">{state.error}</p>
@@ -255,9 +279,9 @@ export function CompareView({ token, activeSessionId, turns, onBeforeSend, onTur
 
     // Mark all cols loading
     setColStates({
-      qwen7b:  { loading: true, currentTool: null, response: null, timing: null, error: null },
-      qwen72b: { loading: true, currentTool: null, response: null, timing: null, error: null },
-      gemini:  { loading: true, currentTool: null, response: null, timing: null, error: null },
+      qwen7b:  { loading: true, toolLog: [], response: null, timing: null, error: null },
+      qwen72b: { loading: true, toolLog: [], response: null, timing: null, error: null },
+      gemini:  { loading: true, toolLog: [], response: null, timing: null, error: null },
     })
 
     const results: Record<ModelKey, { response: string; timing: number }> = {} as never
@@ -265,16 +289,25 @@ export function CompareView({ token, activeSessionId, turns, onBeforeSend, onTur
     const runModel = async (key: ModelKey) => {
       await streamCompareModel(token, key, message, sessionId, (event: SSEEvent) => {
         if (event.type === 'tool') {
-          setCol(key, { currentTool: event.name })
+          setColStates((prev) => ({
+            ...prev,
+            [key]: { ...prev[key], toolLog: [...prev[key].toolLog, { name: event.name, done: false }] },
+          }))
         } else if (event.type === 'tool_done') {
-          setCol(key, { currentTool: null })
+          setColStates((prev) => {
+            const toolLog = [...prev[key].toolLog]
+            // Mark the last un-done entry as done (tools run sequentially)
+            const idx = toolLog.map((e) => e.done).lastIndexOf(false)
+            if (idx !== -1) toolLog[idx] = { ...toolLog[idx], done: true }
+            return { ...prev, [key]: { ...prev[key], toolLog } }
+          })
         } else if (event.type === 'done') {
           results[key] = { response: event.response, timing: event.timing }
-          setCol(key, { loading: false, currentTool: null, response: event.response, timing: event.timing })
+          setCol(key, { loading: false, response: event.response, timing: event.timing })
         } else if (event.type === 'error') {
           const msg = `*Error: ${event.message}*`
           results[key] = { response: msg, timing: event.timing ?? 0 }
-          setCol(key, { loading: false, currentTool: null, error: event.message, timing: event.timing ?? 0 })
+          setCol(key, { loading: false, error: event.message, timing: event.timing ?? 0 })
         }
       })
     }

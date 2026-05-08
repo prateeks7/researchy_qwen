@@ -5,6 +5,11 @@ from src.tools.utils.pdf_processor import download_and_parse_pdf
 NCBI_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 NCBI_EMAIL = "research-agent@example.com"  # required by NCBI TOS
 
+_MAX_QUERY_LEN = 200
+
+def _clean_query(query: str) -> str:
+    q = query.strip().split("\n")[0].strip()
+    return q[:_MAX_QUERY_LEN]
 
 def _ncbi_get(endpoint: str, params: dict) -> requests.Response:
     params.setdefault("email", NCBI_EMAIL)
@@ -19,6 +24,7 @@ def search_pubmed(query: str) -> str:
     Input: a biomedical or life-science search query (e.g. 'CRISPR gene editing cancer').
     Returns paper titles, PMIDs, authors, and download status.
     """
+    query = _clean_query(query)
     print(f"🤖 Agent called search_pubmed with query: {query}")
 
     try:

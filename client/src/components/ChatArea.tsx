@@ -1,18 +1,76 @@
-import { useEffect, useRef } from 'react'
-import { Telescope } from 'lucide-react'
-import { MessageBubble, TypingIndicator } from '@/components/MessageBubble'
+import { useEffect, useRef, useState, useCallback } from 'react'
+import { Telescope, Volume2, VolumeX } from 'lucide-react'
+import { MessageBubble, TypingIndicator, type ToolLogEntry } from '@/components/MessageBubble'
 import { ChatInput } from '@/components/ChatInput'
 import type { Conversation } from '@/types'
 import chatBg from '../../utils/backgrounds/chat.jpg'
+import { randomVibe, nextVibe, type Vibe } from '@/lib/vibes'
 
 interface ChatAreaProps {
   conversation: Conversation | null
   onSendMessage: (content: string) => void
   isLoading?: boolean
+  toolLog?: ToolLogEntry[]
+  isMuted?: boolean
+  onToggleMute?: () => void
 }
 
-export function ChatArea({ conversation, onSendMessage, isLoading = false }: ChatAreaProps) {
-  const bottomRef = useRef<HTMLDivElement>(null)
+export function ChatArea({
+  conversation,
+  onSendMessage,
+  isLoading = false,
+  toolLog = [],
+  isMuted = false,
+  onToggleMute,
+}: ChatAreaProps) {
+  const bottomRef   = useRef<HTMLDivElement>(null)
+  const audioRef    = useRef<HTMLAudioElement | null>(null)
+  const [vibe, setVibe] = useState<Vibe>(randomVibe)
+
+  // ── Pick a fresh random vibe each time loading starts ──────────────────────
+  useEffect(() => {
+    if (isLoading) {
+      const v = randomVibe()
+      setVibe(v)
+
+      const audio = new Audio(v.music)
+      audio.currentTime = v.musicStartAt
+      audio.loop        = true
+      audio.volume      = isMuted ? 0 : v.musicVolume
+      audio.play().catch(() => {})
+      audioRef.current = audio
+    } else {
+      audioRef.current?.pause()
+      audioRef.current = null
+    }
+    return () => { audioRef.current?.pause() }
+  }, [isLoading])  // intentionally omit isMuted — synced below
+
+  // ── Sync mute toggle to currently playing audio ────────────────────────────
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = isMuted ? 0 : vibe.musicVolume
+    }
+  }, [isMuted])
+
+  // ── Cycle to next vibe (new gif + music) without stopping ──────────────────
+  const handleNextVibe = useCallback(() => {
+    const next = nextVibe(vibe)
+    setVibe(next)
+
+    // Swap music on the fly if loading is active
+    if (audioRef.current) {
+      audioRef.current.pause()
+    }
+    if (isLoading) {
+      const audio = new Audio(next.music)
+      audio.currentTime = next.musicStartAt
+      audio.loop        = true
+      audio.volume      = isMuted ? 0 : next.musicVolume
+      audio.play().catch(() => {})
+      audioRef.current = audio
+    }
+  }, [vibe, isLoading, isMuted])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -29,7 +87,7 @@ export function ChatArea({ conversation, onSendMessage, isLoading = false }: Cha
         backgroundPosition: 'center',
       }}
     >
-      {/* Overlay — fully transparent */}
+      {/* Overlay */}
       <div className="absolute inset-0 bg-transparent" />
 
       {/* Content */}
@@ -43,6 +101,16 @@ export function ChatArea({ conversation, onSendMessage, isLoading = false }: Cha
             </h2>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              id="mute-toggle-btn"
+              onClick={onToggleMute}
+              title={isMuted ? 'Unmute music' : 'Mute music'}
+              className="flex items-center justify-center w-7 h-7 rounded-full bg-black/10 hover:bg-black/20 transition-colors"
+            >
+              {isMuted
+                ? <VolumeX className="w-3.5 h-3.5 text-black/60" />
+                : <Volume2 className="w-3.5 h-3.5 text-black/60" />}
+            </button>
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span className="text-black/50 font-sans text-xs">Berg Agent</span>
           </div>
@@ -57,7 +125,15 @@ export function ChatArea({ conversation, onSendMessage, isLoading = false }: Cha
               {(conversation?.messages ?? []).map((msg) => (
                 <MessageBubble key={msg.id} message={msg} />
               ))}
-              {isLoading && <TypingIndicator />}
+              {isLoading && (
+                <TypingIndicator
+                  toolLog={toolLog}
+                  vibe={vibe}
+                  isMuted={isMuted}
+                  onNextVibe={handleNextVibe}
+                  onToggleMute={onToggleMute}
+                />
+              )}
               <div ref={bottomRef} />
             </div>
           )}

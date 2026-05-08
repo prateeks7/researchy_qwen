@@ -5,6 +5,8 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import List
 
+from langchain_core.messages import HumanMessage, AIMessage
+
 import json as _json
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -182,14 +184,26 @@ class CompareTurnSave(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _format_history(messages: list) -> str:
-    if not messages:
-        return ""
-    lines = []
+def _format_history(messages: list) -> list:
+    result = []
     for msg in messages:
-        prefix = "Human" if msg["role"] == "user" else "AI"
-        lines.append(f"{prefix}: {msg['content']}")
-    return "\n".join(lines)
+        if msg["role"] == "user":
+            result.append(HumanMessage(content=msg["content"]))
+        else:
+            result.append(AIMessage(content=msg["content"]))
+    return result
+
+
+def _preflight_kb(message: str) -> str | None:
+    """Check if relevant papers are already in the vector DB. Returns context or None."""
+    from src.db.vector_store import search_vector_db
+    try:
+        result = search_vector_db(message, k=3)
+        if not result or "No relevant" in result or "no relevant" in result:
+            return None
+        return result
+    except Exception:
+        return None
 
 
 def _run_agent(message: str, history_messages: list) -> str:
@@ -198,8 +212,14 @@ def _run_agent(message: str, history_messages: list) -> str:
     chat_history = _format_history(history_messages)
     callback = ContextCaptureCallback()
 
+    kb_context = _preflight_kb(message)
+    agent_input = (
+        f"[KNOWLEDGE BASE CONTEXT — papers already indexed locally:]\n{kb_context}\n\n{message}"
+        if kb_context else message
+    )
+
     result = _agent.invoke(
-        {"input": message, "chat_history": chat_history},
+        {"input": agent_input, "chat_history": chat_history},
         config={"callbacks": [callback]},
     )
     answer: str = result["output"]
@@ -208,7 +228,7 @@ def _run_agent(message: str, history_messages: list) -> str:
         logger.warning("Agent answered from memory — retrying with forced tool use.")
         callback.reset()
         forced = (
-            message
+            agent_input
             + "\n\n[SYSTEM OVERRIDE: You answered the previous turn without using any tools. "
             "That is not allowed. You MUST call search_arxiv_papers, search_semantic_scholar, "
             "or search_pubmed NOW before writing a Final Answer.]"
@@ -237,15 +257,24 @@ def _sync_db():
     sync_mongo_to_chroma()
 
 
-def _run_agent_with(agent_executor, message: str, history_messages: list, extra_callback=None) -> str:
+def _run_agent_with(agent_executor, message: str, history_messages: list, model: str = "72b", extra_callback=None) -> str:
     """Run a specific agent executor (for compare mode)."""
     from src.evaluation.callback import ContextCaptureCallback
+    from src.tools.model_context import set_model
+    set_model(model)
     chat_history = _format_history(history_messages)
     callbacks = [ContextCaptureCallback()]
     if extra_callback is not None:
         callbacks.append(extra_callback)
+
+    kb_context = _preflight_kb(message)
+    agent_input = (
+        f"[KNOWLEDGE BASE CONTEXT — papers already indexed locally:]\n{kb_context}\n\n{message}"
+        if kb_context else message
+    )
+
     result = agent_executor.invoke(
-        {"input": message, "chat_history": chat_history},
+        {"input": agent_input, "chat_history": chat_history},
         config={"callbacks": callbacks},
     )
     answer: str = result["output"]
@@ -496,15 +525,18 @@ async def compare_stream_endpoint(
     loop = asyncio.get_event_loop()
     queue: asyncio.Queue = asyncio.Queue()
 
+    _MODEL_KEY_TO_NAME = {"qwen7b": "7b", "qwen72b": "72b", "gemini": "gemini-flash"}
+    model_name = _MODEL_KEY_TO_NAME.get(model_key, "72b")
+
     async def generate():
         import time as _time
+        import functools
         from src.evaluation.callback import StreamingCallback
         t0 = _time.monotonic()
         cb = StreamingCallback(queue, loop)
 
-        future = loop.run_in_executor(
-            _executor, _run_agent_with, agent_exec, req.message, history, cb
-        )
+        fn = functools.partial(_run_agent_with, agent_exec, req.message, history, model_name, cb)
+        future = loop.run_in_executor(_executor, fn)
 
         while True:
             try:
@@ -521,6 +553,9 @@ async def compare_stream_endpoint(
             yield f"data: {_json.dumps({'type': 'done', 'response': result, 'timing': elapsed})}\n\n"
         except Exception as exc:
             yield f"data: {_json.dumps({'type': 'error', 'message': str(exc), 'timing': elapsed})}\n\n"
+        finally:
+            # Sync any newly downloaded papers into ChromaDB
+            loop.run_in_executor(_executor, _sync_db)
 
     return StreamingResponse(
         generate(),
@@ -543,6 +578,123 @@ async def save_compare_turn_endpoint(
         update_compare_session_title(session_id, title)
     append_compare_turn(session_id, body.user_message, body.responses, body.timings)
     return {"ok": True}
+
+
+# ── Chat stream endpoint ──────────────────────────────────────────────────────
+
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current_user)):
+    """SSE version of /api/chat — streams tool events then the final response."""
+    if _agent is None:
+        raise HTTPException(status_code=503, detail="Agent is still initialising, please retry.")
+
+    session = get_session(req.session_id, current_user["sub"])
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    refusal = shield_check(req.message)
+    if refusal:
+        append_message(req.session_id, "user", req.message)
+        append_message(req.session_id, "assistant", refusal)
+        async def _refused():
+            yield f"data: {_json.dumps({'type': 'done', 'response': refusal})}\n\n"
+        return StreamingResponse(_refused(), media_type="text/event-stream")
+
+    append_message(req.session_id, "user", req.message)
+
+    if not session["messages"]:
+        title = req.message[:48] + ("…" if len(req.message) > 48 else "")
+        update_session_title(req.session_id, title)
+
+    history = session["messages"]
+    loop = asyncio.get_event_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def generate():
+        import time as _time
+        from src.evaluation.callback import StreamingCallback, ContextCaptureCallback
+        t0 = _time.monotonic()
+
+        stream_cb = StreamingCallback(queue, loop)
+        ctx_cb = ContextCaptureCallback()
+
+        def _run():
+            from src.tools.model_context import set_model
+            set_model("72b")
+            chat_history = _format_history(history)
+
+            kb_context = _preflight_kb(req.message)
+            agent_input = (
+                f"[KNOWLEDGE BASE CONTEXT — papers already indexed locally:]\n{kb_context}\n\n{req.message}"
+                if kb_context else req.message
+            )
+
+            result = _agent.invoke(
+                {"input": agent_input, "chat_history": chat_history},
+                config={"callbacks": [ctx_cb, stream_cb]},
+            )
+            answer: str = result["output"]
+
+            if ctx_cb.answered_from_memory and _PAPER_QUERY.search(req.message):
+                forced = (
+                    agent_input
+                    + "\n\n[SYSTEM OVERRIDE: You answered without using any tools. "
+                    "You MUST call search_arxiv_papers, search_semantic_scholar, "
+                    "or search_pubmed NOW before writing a Final Answer.]"
+                )
+                result = _agent.invoke(
+                    {"input": forced, "chat_history": chat_history},
+                    config={"callbacks": [ctx_cb, stream_cb]},
+                )
+                answer = result["output"]
+
+            violations = check_exclusion_violations(req.message, answer)
+            if violations:
+                answer += (
+                    "\n\n---\n"
+                    f"> ⚠️ **Auto-check:** Excluded topic(s): **{', '.join(violations)}**."
+                )
+            return answer
+
+        future = loop.run_in_executor(_executor, _run)
+
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=0.3)
+                yield f"data: {event}\n\n"
+            except asyncio.TimeoutError:
+                if future.done():
+                    break
+                yield ": keepalive\n\n"
+
+        try:
+            response = future.result()
+        except asyncio.TimeoutError:
+            response = "Query took too long. Try asking about one paper at a time."
+        except Exception as exc:
+            logger.error("Agent stream error: %s", exc)
+            response = f"Error: {exc}"
+
+        _ITER_LIMIT_MSGS = (
+            "agent stopped due to iteration limit",
+            "agent stopped due to time limit",
+        )
+        if any(m in response.lower() for m in _ITER_LIMIT_MSGS):
+            response = (
+                "I wasn't able to find that paper after exhausting my search steps. "
+                "It may not be indexed on arXiv. Try rephrasing the title, providing the arXiv ID directly, "
+                "or ask me to search Semantic Scholar or the web instead."
+            )
+
+        append_message(req.session_id, "assistant", response)
+        loop.run_in_executor(_executor, _sync_db)
+        yield f"data: {_json.dumps({'type': 'done', 'response': response})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ── Chat endpoint ─────────────────────────────────────────────────────────────

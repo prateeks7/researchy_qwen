@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
 import { LoginPage } from '@/pages/LoginPage'
 import { Sidebar } from '@/components/Sidebar'
@@ -6,11 +6,12 @@ import { ChatArea } from '@/components/ChatArea'
 import { CompareView } from '@/components/CompareView'
 import type { Conversation, Message, CompareSession, CompareTurn } from '@/types'
 import {
-  sendMessage,
+  streamChatMessage,
   getSessions, createSession, getSessionDetail, deleteSession,
   getCompareSessions, createCompareSession,
   getCompareSessionDetail, deleteCompareSession,
 } from '@/lib/api'
+import type { ToolLogEntry } from '@/components/MessageBubble'
 
 function generateId() {
   return Math.random().toString(36).slice(2, 11)
@@ -23,6 +24,8 @@ function ChatApp() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [isChatLoading, setIsChatLoading] = useState(false)
+  const [chatToolLog, setChatToolLog] = useState<ToolLogEntry[]>([])
+  const [isMuted, setIsMuted] = useState(false)
 
   // ── Compare state ─────────────────────────────────────────────────────────
   const [compareMode, setCompareMode] = useState(false)
@@ -106,24 +109,34 @@ function ChatApp() {
       }),
     )
     setIsChatLoading(true)
-    try {
-      const response = await sendMessage(token, content, targetId)
-      const assistantMsg: Message = { id: generateId(), role: 'assistant', content: response, timestamp: new Date() }
-      setConversations((prev) =>
-        prev.map((c) => c.id === targetId ? { ...c, messages: [...c.messages, assistantMsg] } : c),
-      )
-    } catch (err) {
-      const errorMsg: Message = {
-        id: generateId(), role: 'assistant',
-        content: `**Error:** ${err instanceof Error ? err.message : 'Unknown error'}`,
-        timestamp: new Date(),
+    setChatToolLog([])
+
+    let response = ''
+    await streamChatMessage(token, content, targetId, (event) => {
+      if (event.type === 'tool') {
+        setChatToolLog((prev) => [...prev, { name: event.name, done: false }])
+      } else if (event.type === 'tool_done') {
+        setChatToolLog((prev) =>
+          prev.map((e, i) => i === prev.length - 1 ? { ...e, done: true } : e)
+        )
+      } else if (event.type === 'done') {
+        response = event.response
+      } else if (event.type === 'error') {
+        response = `**Error:** ${event.message}`
       }
-      setConversations((prev) =>
-        prev.map((c) => c.id === targetId ? { ...c, messages: [...c.messages, errorMsg] } : c),
-      )
-    } finally {
-      setIsChatLoading(false)
+    })
+
+    const assistantMsg: Message = {
+      id: generateId(),
+      role: 'assistant',
+      content: response || '**Error:** No response received.',
+      timestamp: new Date(),
     }
+    setConversations((prev) =>
+      prev.map((c) => c.id === targetId ? { ...c, messages: [...c.messages, assistantMsg] } : c),
+    )
+    setIsChatLoading(false)
+    setChatToolLog([])
   }, [activeId, token])
 
   const handleDeleteConversation = useCallback(async (id: string) => {
@@ -195,6 +208,10 @@ function ChatApp() {
     setCompareMode((m) => !m)
   }, [])
 
+  const handleToggleMute = useCallback(() => {
+    setIsMuted((m) => !m)
+  }, [])
+
   return (
     <div className="flex h-screen w-screen overflow-hidden">
       <Sidebar
@@ -224,6 +241,9 @@ function ChatApp() {
           conversation={activeConversation}
           onSendMessage={handleSendMessage}
           isLoading={isChatLoading}
+          toolLog={chatToolLog}
+          isMuted={isMuted}
+          onToggleMute={handleToggleMute}
         />
       )}
 
