@@ -4,12 +4,13 @@ import { LoginPage } from '@/pages/LoginPage'
 import { Sidebar } from '@/components/Sidebar'
 import { ChatArea } from '@/components/ChatArea'
 import { CompareView } from '@/components/CompareView'
-import type { Conversation, Message, CompareSession, CompareTurn } from '@/types'
+import type { Conversation, Message, CompareSession, CompareTurn, ModelKey } from '@/types'
 import {
   streamChatMessage,
   getSessions, createSession, getSessionDetail, deleteSession,
   getCompareSessions, createCompareSession,
   getCompareSessionDetail, deleteCompareSession,
+  checkModelsStatus,
 } from '@/lib/api'
 import type { ToolLogEntry } from '@/components/MessageBubble'
 
@@ -26,6 +27,10 @@ function ChatApp() {
   const [isChatLoading, setIsChatLoading] = useState(false)
   const [chatToolLog, setChatToolLog] = useState<ToolLogEntry[]>([])
   const [isMuted, setIsMuted] = useState(false)
+  const [selectedModel, setSelectedModel] = useState<ModelKey>('qwen72b')
+  const [hfToken, setHfToken] = useState('')
+  const [geminiToken, setGeminiToken] = useState('')
+  const [localAvailable, setLocalAvailable] = useState<boolean | null>(null)
 
   // ── Compare state ─────────────────────────────────────────────────────────
   const [compareMode, setCompareMode] = useState(false)
@@ -34,6 +39,18 @@ function ChatApp() {
   const [compareTurns, setCompareTurns] = useState<CompareTurn[]>([])
 
   const activeConversation = conversations.find((c) => c.id === activeId) ?? null
+
+  // ── Check local model availability — once on mount, then every 30s ─────────
+  const recheckLocal = useCallback(() => {
+    setLocalAvailable(null)
+    checkModelsStatus().then((s) => setLocalAvailable(s.local_72b_available))
+  }, [])
+
+  useEffect(() => {
+    recheckLocal()
+    const id = setInterval(recheckLocal, 30_000)
+    return () => clearInterval(id)
+  }, [recheckLocal])
 
   // ── Load sessions ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -112,19 +129,21 @@ function ChatApp() {
     setChatToolLog([])
 
     let response = ''
-    await streamChatMessage(token, content, targetId, (event) => {
+    await streamChatMessage(token, content, targetId, selectedModel, (event) => {
       if (event.type === 'tool') {
         setChatToolLog((prev) => [...prev, { name: event.name, done: false }])
       } else if (event.type === 'tool_done') {
         setChatToolLog((prev) =>
-          prev.map((e, i) => i === prev.length - 1 ? { ...e, done: true } : e)
+          prev.map((e, i) => i === prev.length - 1
+            ? { ...e, name: event.display_name ?? (event.cache_hit ? 'cache_hit' : e.name), done: true }
+            : e)
         )
       } else if (event.type === 'done') {
         response = event.response
       } else if (event.type === 'error') {
         response = `**Error:** ${event.message}`
       }
-    })
+    }, hfToken || undefined, geminiToken || undefined)
 
     const assistantMsg: Message = {
       id: generateId(),
@@ -137,7 +156,7 @@ function ChatApp() {
     )
     setIsChatLoading(false)
     setChatToolLog([])
-  }, [activeId, token])
+  }, [activeId, selectedModel, token])
 
   const handleDeleteConversation = useCallback(async (id: string) => {
     if (!token) return
@@ -235,6 +254,10 @@ function ChatApp() {
           turns={compareTurns}
           onBeforeSend={handleBeforeCompareSend}
           onTurnComplete={handleCompareTurnComplete}
+          hfToken={hfToken}
+          onSetHfToken={setHfToken}
+          geminiToken={geminiToken}
+          onSetGeminiToken={setGeminiToken}
         />
       ) : (
         <ChatArea
@@ -244,6 +267,14 @@ function ChatApp() {
           toolLog={chatToolLog}
           isMuted={isMuted}
           onToggleMute={handleToggleMute}
+          selectedModel={selectedModel}
+          onSelectModel={setSelectedModel}
+          hfToken={hfToken}
+          onSetHfToken={setHfToken}
+          geminiToken={geminiToken}
+          onSetGeminiToken={setGeminiToken}
+          localAvailable={localAvailable}
+          onRecheckLocal={recheckLocal}
         />
       )}
 

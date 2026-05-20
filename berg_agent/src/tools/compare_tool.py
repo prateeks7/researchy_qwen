@@ -5,10 +5,10 @@ Strategy:
   1. For each comparison dimension (methodology, results, datasets, …) query
      ChromaDB for *only the relevant sections* of the requested papers.
   2. Issue one focused 72B LLM call per dimension — each call stays well
-     under the 32K token budget.
+     under the model context budget.
   3. Stitch partial comparisons into a final structured answer and return it.
 
-Always uses Qwen 72B regardless of which model the outer agent is running on.
+Uses the same model as the outer agent so each pipeline stays consistent.
 """
 
 import logging
@@ -18,8 +18,11 @@ from langchain_core.output_parsers import StrOutputParser
 
 from src.db.vector_store import get_vector_store, _format_results
 from src.tools.llm_setup import get_llm
+from src.tools.model_context import get_model
 
 logger = logging.getLogger(__name__)
+
+MAX_COMPARE_PAPERS = 5
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -147,7 +150,7 @@ def compare_papers(query: str) -> str:
     This tool:
     - Uses targeted ChromaDB retrieval per comparison dimension (not full text)
     - Runs one focused LLM call per dimension to stay under the 32K context window
-    - Always uses Qwen 72B for consistency
+    - Uses the same model as the outer agent for consistency
     - Returns a structured multi-section comparison report
 
     Use this instead of downloading both papers and comparing manually.
@@ -172,11 +175,17 @@ def compare_papers(query: str) -> str:
             "Make sure both papers are already downloaded before calling this tool."
         )
 
+    if len(paper_titles) > MAX_COMPARE_PAPERS:
+        return (
+            f"compare_papers can handle up to {MAX_COMPARE_PAPERS} papers in one request. "
+            f"You provided {len(paper_titles)}. Please split this into smaller batches."
+        )
+
     logger.info("Comparing papers: %s", paper_titles)
     logger.info("Question: %s", question)
 
-    # ── Always use 72B ─────────────────────────────────────────────────────────
-    llm = get_llm("72b")
+    # Keep tool-internal comparison calls on the same model as the outer agent.
+    llm = get_llm(get_model())
     dim_chain    = _DIMENSION_PROMPT    | llm | StrOutputParser()
     synth_chain  = _SYNTHESIS_PROMPT    | llm | StrOutputParser()
 

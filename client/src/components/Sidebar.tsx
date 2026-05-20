@@ -179,19 +179,28 @@ export function Sidebar({
 
         {/* Compare Models button */}
         <div className="px-3 py-2 border-t border-black/10">
-          <button
-            onClick={onToggleCompareMode}
-            className={cn(
-              'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150',
-              'border group',
-              compareMode
-                ? 'bg-black/15 border-black/25 text-black'
-                : 'bg-black/5 hover:bg-black/12 border-black/10 hover:border-black/20 text-black/60 hover:text-black',
-            )}
-          >
-            <GitCompare className="w-4 h-4 flex-shrink-0" />
-            Compare Models
-          </button>
+          <div className="flex gap-1.5">
+            <button
+              onClick={onToggleCompareMode}
+              className={cn(
+                'flex-1 flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150',
+                'border group',
+                compareMode
+                  ? 'bg-black/15 border-black/25 text-black'
+                  : 'bg-black/5 hover:bg-black/10 border-black/10 hover:border-black/20 text-black/60 hover:text-black',
+              )}
+            >
+              <GitCompare className="w-4 h-4 flex-shrink-0" />
+              Compare Models
+            </button>
+            <button
+              onClick={onNewCompare}
+              title="New comparison"
+              className="w-10 rounded-lg border border-black/10 bg-black/5 text-black/50 hover:bg-black/10 hover:text-black transition-colors flex items-center justify-center"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
 
           {/* Compare sessions list */}
           {compareSessions.length > 0 && (

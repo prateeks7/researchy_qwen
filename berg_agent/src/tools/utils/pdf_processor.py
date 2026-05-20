@@ -1,8 +1,9 @@
 import os
 import json
 import logging
+import threading
 import requests
-import fitz
+import pymupdf as fitz
 from datetime import datetime
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -12,6 +13,17 @@ from src.db.mongo_client import insert_paper, get_paper_by_link
 
 logger = logging.getLogger(__name__)
 os.makedirs("papers", exist_ok=True)
+
+# Per-URL locks — threads downloading the same paper block each other,
+# threads downloading different papers run freely in parallel.
+_url_locks: dict[str, threading.Lock] = {}
+_url_locks_guard = threading.Lock()
+
+def _url_lock(url: str) -> threading.Lock:
+    with _url_locks_guard:
+        if url not in _url_locks:
+            _url_locks[url] = threading.Lock()
+        return _url_locks[url]
 
 SECTION_KEYS = [
     "abstract", "introduction", "related_work", "methodology",
@@ -25,6 +37,29 @@ _SKIP_VALUES = {"Content not explicitly found.", "Failed to parse", "No content 
 # We parse at most 30K chars per LLM call; longer papers are chunked.
 _PARSE_CHUNK_SIZE = 30_000   # chars per chunk sent to the parse LLM
 _PARSE_OVERLAP    =  1_000   # char overlap between chunks to avoid section splits
+
+_SUMMARIZE_PROMPT = PromptTemplate.from_template(
+    """You are a research assistant. Below are sections extracted from an academic paper.
+
+For each section that has content, write a 2-4 sentence summary capturing the key methods,
+findings, or contributions. Also produce 5-10 keywords describing the paper's topics.
+
+Output ONE valid JSON object with:
+- "summaries": object with same section keys, each value a 2-4 sentence summary
+- "keywords": JSON array of 5-10 keyword strings
+
+Section keys: abstract, introduction, related_work, methodology, datasets, metrics,
+results_and_evaluations, conclusion, limitations
+
+Rules:
+- Output ONLY the JSON. No markdown, no explanation.
+- If a section has no content, set its summary to "Content not explicitly found."
+
+SECTIONS:
+{sections_text}
+
+JSON OUTPUT:"""
+)
 
 _PARSE_PROMPT = PromptTemplate.from_template(
     """You are a strict data extraction agent. Read the following raw text from an academic research paper.
@@ -111,7 +146,8 @@ def llm_parse_and_summarize_pdf(raw_text: str) -> tuple[dict, dict, list]:
     - If raw_text >  _PARSE_CHUNK_SIZE chars  → split into overlapping chunks,
       parse each, then merge results.
 
-    Falls back to gemini-flash if the primary model times out or errors.
+    Uses the active model for the whole parse so tool work stays consistent with
+    the selected chat pipeline.
     Returns: (sections dict, summaries dict, keywords list)
     """
     primary_model = get_model()
@@ -133,23 +169,9 @@ def llm_parse_and_summarize_pdf(raw_text: str) -> tuple[dict, dict, list]:
     print(f"🧠 Parsing PDF with model: {primary_model} ({len(chunks_text)} chunk(s))")
     parsed_chunks = _parse_chunks_with_model(primary_model, chunks_text)
 
-    # ── Fallback to gemini-flash if primary produced nothing ───────────────────
-    if not parsed_chunks and primary_model != "gemini-flash":
-        msg = f"PDF parse: {primary_model} produced no output — falling back to gemini-flash."
-        logger.warning(msg)
-        print(f"🔄 {msg}")
-        try:
-            parsed_chunks = _parse_chunks_with_model("gemini-flash", chunks_text)
-            if parsed_chunks:
-                logger.info("PDF parse: gemini-flash fallback succeeded.")
-                print("✅ Gemini-flash fallback succeeded.")
-        except Exception as e:
-            logger.error("PDF parse: gemini-flash fallback also failed: %s", e)
-            print(f"⚠️ Gemini fallback also failed: {e}")
-
     if not parsed_chunks:
-        logger.error("PDF parse: all attempts failed — storing raw text abstract only.")
-        print("⚠️ All parse attempts failed — using raw text fallback.")
+        logger.error("PDF parse failed with %s — storing raw text abstract only.", primary_model)
+        print("⚠️ Parse failed with selected model — using raw text fallback.")
         fallback_sections = {k: "Failed to parse" for k in SECTION_KEYS}
         fallback_sections["abstract"] = raw_text[:2000]
         fallback_summaries = {k: fallback_sections[k][:300] for k in SECTION_KEYS}
@@ -172,22 +194,61 @@ def llm_parse_and_summarize_pdf(raw_text: str) -> tuple[dict, dict, list]:
     return sections, summaries, keywords
 
 
-def download_and_parse_pdf(
-    pdf_url: str,
-    title: str,
-    source_id: str,
-    date_published: str = None,
-    categories: list = None,
-) -> str:
-    # 1. Cache check
-    cached = get_paper_by_link(pdf_url)
-    if cached:
-        print(f"⚡ CACHE HIT: {cached['title']}")
-        return _format_cached_paper(cached)
+def _llm_summarize_sections(sections: dict) -> tuple[dict, list]:
+    """
+    Takes already-detected sections dict, calls LLM once to summarize each section
+    and extract keywords. Returns (summaries_dict, keywords_list).
+    """
+    model = get_model()
+    llm = get_llm(model)
+    chain = _SUMMARIZE_PROMPT | llm | StrOutputParser()
 
-    print(f"📥 CACHE MISS: Downloading PDF from {pdf_url}")
+    # Build compact sections text (cap each section at 2000 chars to fit context)
+    sections_text = "\n\n".join(
+        f"[{k.upper()}]\n{v[:2000]}"
+        for k, v in sections.items()
+        if v not in _SKIP_VALUES
+    )
 
-    # 2. Download
+    print(f"🧠 Summarizing sections with model: {model}")
+    try:
+        response = chain.invoke({"sections_text": sections_text})
+        data = _parse_llm_json(response)
+        summaries = data.get("summaries", {})
+        keywords = data.get("keywords", [])
+        if not isinstance(keywords, list):
+            keywords = []
+        # Fill missing section keys with fallback
+        for k in SECTION_KEYS:
+            if k not in summaries or not summaries[k] or summaries[k] in _SKIP_VALUES:
+                summaries[k] = sections.get(k, "Content not explicitly found.")[:300]
+        print(f"   ✅ Summaries generated, {len(keywords)} keywords")
+        return summaries, keywords
+    except Exception as e:
+        logger.warning("LLM summarization failed: %s", e)
+        print(f"   ⚠️ Summarization failed, using section text fallback")
+        summaries = {k: (v[:300] if v not in _SKIP_VALUES else v) for k, v in sections.items()}
+        return summaries, []
+
+
+def _scrape_text(pdf_url: str, source_id: str):
+    """Try HTML scraping based on URL. Returns text or None."""
+    from src.tools.utils.html_scraper import scrape_arxiv_html, scrape_pubmed_html
+    import re as _re
+    if "arxiv.org" in pdf_url:
+        # Extract arXiv ID from the URL (e.g. arxiv.org/pdf/1706.03762 or abs/1706.03762v1)
+        m = _re.search(r'arxiv\.org/(?:pdf|abs)/([0-9]{4}\.[0-9]+)', pdf_url)
+        arxiv_id = m.group(1) if m else source_id.split("v")[0]
+        return scrape_arxiv_html(arxiv_id)
+    if "ncbi.nlm.nih.gov/pmc" in pdf_url:
+        m = _re.search(r'PMC(\d+)', pdf_url)
+        if m:
+            return scrape_pubmed_html(m.group(1))
+    return None
+
+
+def _download_pdf_text(pdf_url: str, source_id: str):
+    """Download PDF and extract raw text. Returns (text, pdf_path)."""
     pdf_path = f"papers/{source_id}.pdf"
     try:
         response = requests.get(pdf_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
@@ -195,23 +256,66 @@ def download_and_parse_pdf(
         with open(pdf_path, "wb") as f:
             f.write(response.content)
     except Exception as e:
-        return f"❌ Failed to download PDF: {e}"
-
-    # 3. Extract text
+        print(f"   ❌ PDF download failed: {e}")
+        return None, None
     try:
         doc = fitz.open(pdf_path)
-        raw_text = "\n".join(page.get_text("text") for page in doc)
+        text = "\n".join(page.get_text("text") for page in doc)
         doc.close()
+        return text, pdf_path
     except Exception as e:
-        return f"❌ Failed to read PDF: {e}"
+        print(f"   ❌ PDF text extraction failed: {e}")
+        return None, pdf_path
 
-    # 4. Single LLM call — parse + summarize
-    sections, summaries, llm_keywords = llm_parse_and_summarize_pdf(raw_text)
 
-    # 5. Merge keywords
+def download_and_parse_pdf(
+    pdf_url: str,
+    title: str,
+    source_id: str,
+    date_published: str = None,
+    categories: list = None,
+) -> str:
+    from src.tools.utils.section_detector import detect_sections, clean_section_text
+
+    # 1. Fast cache check before acquiring any lock
+    cached = get_paper_by_link(pdf_url)
+    if cached:
+        print(f"✅ Already indexed — loading from database: {cached['title']}")
+        return _format_cached_paper(cached)
+
+    # Per-URL lock — only threads fetching the same paper block each other
+    with _url_lock(pdf_url):
+        # Re-check inside lock — another thread may have finished while we waited
+        cached = get_paper_by_link(pdf_url)
+        if cached:
+            print(f"✅ Already indexed (race-free) — loading from database: {cached['title']}")
+            return _format_cached_paper(cached)
+
+        print(f"📥 Not in database — processing new paper: {title}")
+
+        # 2. Try HTML scraping first (~500ms, no download)
+        raw_text = _scrape_text(pdf_url, source_id)
+
+        # 3. Fallback: download PDF and extract text (~2s)
+        pdf_path = None
+        if not raw_text:
+            print(f"   ⚠️ Scraping failed — falling back to PDF download")
+            raw_text, pdf_path = _download_pdf_text(pdf_url, source_id)
+
+        if not raw_text:
+            return f"❌ Failed to retrieve paper: {title}"
+
+        # 4. Section detection — pure regex, no LLM
+        sections = detect_sections(raw_text)
+        sections = {k: clean_section_text(v) for k, v in sections.items()}
+
+    # 5. LLM summarization is outside the lock — doesn't block other papers
+    summaries, llm_keywords = _llm_summarize_sections(sections)
+
+    # 6. Keywords from LLM + categories
     all_keywords = list(set(llm_keywords + (categories or []))) or ["General Research"]
 
-    # 6. Save to MongoDB
+    # 7. Save to MongoDB
     pub_date = date_published or datetime.now().strftime("%Y-%m-%d")
     insert_paper({
         "link": pdf_url,
@@ -222,8 +326,8 @@ def download_and_parse_pdf(
         "keywords": all_keywords,
     })
 
-    # 7. Cleanup
-    if os.path.exists(pdf_path):
+    # 8. Cleanup PDF if downloaded
+    if pdf_path and os.path.exists(pdf_path):
         os.remove(pdf_path)
 
     _LABELS = {
@@ -233,14 +337,11 @@ def download_and_parse_pdf(
         "results_and_evaluations": "RESULTS & EVALUATIONS",
         "conclusion": "CONCLUSION", "limitations": "LIMITATIONS",
     }
-    # Return SUMMARIES (not full text) so two-paper compare calls stay
-    # comfortably within the 32K context window. The agent can always call
-    # search_paper_details for raw section text when it needs more depth.
     lines = [
-        "✅ Paper downloaded and indexed successfully.", "",
+        "✅ Paper processed and indexed.", "",
         f"TITLE: {title}", f"PUBLISHED: {pub_date}",
         f"KEYWORDS: {', '.join(all_keywords)}", f"SOURCE: {pdf_url}", "",
-        "(Section summaries shown — call search_paper_details for full text)", "",
+        "(Section previews shown — call search_paper_details for full text)", "",
     ]
     for key, label in _LABELS.items():
         text = summaries.get(key) or sections.get(key, "")
@@ -263,7 +364,7 @@ def _format_cached_paper(paper: dict) -> str:
         "conclusion": "CONCLUSION", "limitations": "LIMITATIONS",
     }
     lines = [
-        "⚡ Loaded from cache.", "",
+        "🌍 Loaded from database (already indexed).", "",
         f"TITLE: {title}", f"PUBLISHED: {pub_date}", f"KEYWORDS: {keywords}", "",
     ]
     for key, label in _LABELS.items():

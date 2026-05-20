@@ -1,4 +1,4 @@
-import type { Session, SessionDetail, User, CompareSession, CompareSessionDetail } from '@/types'
+import type { Session, SessionDetail, User, CompareSession, CompareSessionDetail, ModelKey } from '@/types'
 
 const API_BASE = 'http://localhost:8000'
 
@@ -80,12 +80,18 @@ export async function streamChatMessage(
   token: string,
   message: string,
   sessionId: string,
+  modelKey: ModelKey,
   onEvent: (event: SSEEvent) => void,
+  hfToken?: string,
+  geminiToken?: string,
 ): Promise<void> {
+  const body: Record<string, unknown> = { message, session_id: sessionId, model_key: modelKey }
+  if (hfToken) body.hf_token = hfToken
+  if (geminiToken) body.gemini_token = geminiToken
   const res = await fetch(`${API_BASE}/api/chat/stream`, {
     method: 'POST',
     headers: authHeaders(token),
-    body: JSON.stringify({ message, session_id: sessionId }),
+    body: JSON.stringify(body),
   })
   if (!res.ok || !res.body) {
     const detail = await res.text().catch(() => res.statusText)
@@ -109,11 +115,11 @@ export async function streamChatMessage(
   }
 }
 
-export async function sendMessage(token: string, message: string, sessionId: string): Promise<string> {
+export async function sendMessage(token: string, message: string, sessionId: string, modelKey: ModelKey): Promise<string> {
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: 'POST',
     headers: authHeaders(token),
-    body: JSON.stringify({ message, session_id: sessionId }),
+    body: JSON.stringify({ message, session_id: sessionId, model_key: modelKey }),
   })
   const data = await handleResponse<{ response: string }>(res)
   return data.response
@@ -164,7 +170,7 @@ export async function sendCompareMessage(token: string, message: string, session
 
 export type SSEEvent =
   | { type: 'tool'; name: string }
-  | { type: 'tool_done' }
+  | { type: 'tool_done'; name?: string; display_name?: string | null; cache_hit?: boolean }
   | { type: 'done'; response: string; timing: number }
   | { type: 'error'; message: string; timing?: number }
 
@@ -174,11 +180,16 @@ export async function streamCompareModel(
   message: string,
   sessionId: string,
   onEvent: (event: SSEEvent) => void,
+  hfToken?: string,
+  geminiToken?: string,
 ): Promise<void> {
+  const body: Record<string, unknown> = { message, session_id: sessionId }
+  if (hfToken) body.hf_token = hfToken
+  if (geminiToken) body.gemini_token = geminiToken
   const res = await fetch(`${API_BASE}/api/compare/stream/${modelKey}`, {
     method: 'POST',
     headers: authHeaders(token),
-    body: JSON.stringify({ message, session_id: sessionId }),
+    body: JSON.stringify(body),
   })
   if (!res.ok || !res.body) {
     const detail = await res.text().catch(() => res.statusText)
@@ -215,6 +226,18 @@ export async function saveCompareTurn(
     body: JSON.stringify({ user_message: userMessage, responses, timings }),
   })
   if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`)
+}
+
+// ── Models ────────────────────────────────────────────────────────────────────
+
+export async function checkModelsStatus(): Promise<{ local_72b_available: boolean }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/models/status`, { signal: AbortSignal.timeout(4000) })
+    if (!res.ok) return { local_72b_available: false }
+    return res.json()
+  } catch {
+    return { local_72b_available: false }
+  }
 }
 
 // ── Health ────────────────────────────────────────────────────────────────────

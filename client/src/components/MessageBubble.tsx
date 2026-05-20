@@ -10,16 +10,19 @@ import type { Vibe } from '@/lib/vibes'
 interface ToolConfig { emoji: string; label: string }
 
 const TOOL_CONFIG: Record<string, ToolConfig> = {
-  search_internal_knowledge:                 { emoji: '⚡', label: 'Checking Vector DB' },
-  search_paper_details:                      { emoji: '🔍', label: 'Reading paper details' },
+  cache_check:                               { emoji: '🌍', label: 'Checking ChromaDB cache' },
+  cache_hit:                                 { emoji: '🌍', label: 'Using ChromaDB cache' },
+  cache_miss:                                { emoji: '❌', label: 'ChromaDB cache miss' },
+  search_internal_knowledge:                 { emoji: '🔍', label: 'Searching knowledge base' },
+  search_paper_details:                      { emoji: '🌍', label: 'Reading ChromaDB raw text' },
   search_arxiv_papers:                       { emoji: '📡', label: 'Searching arXiv' },
-  download_and_parse_arxiv_paper:            { emoji: '📥', label: 'Downloading & parsing paper' },
+  download_and_parse_arxiv_paper:            { emoji: '📥', label: 'Scraping & parsing paper' },
   search_semantic_scholar:                   { emoji: '🎓', label: 'Searching Semantic Scholar' },
   get_paper_citations:                       { emoji: '🔗', label: 'Fetching citations' },
   get_author_papers:                         { emoji: '👤', label: 'Looking up author papers' },
-  download_and_parse_semantic_scholar_paper: { emoji: '📥', label: 'Downloading & parsing paper' },
+  download_and_parse_semantic_scholar_paper: { emoji: '📥', label: 'Scraping & parsing paper' },
   search_pubmed:                             { emoji: '🧬', label: 'Searching PubMed' },
-  download_pubmed_paper:                     { emoji: '📥', label: 'Downloading paper' },
+  download_pubmed_paper:                     { emoji: '📥', label: 'Scraping paper' },
   web_search_tool:                           { emoji: '🌐', label: 'Searching the web' },
   compare_papers:                            { emoji: '⚖️',  label: 'Comparing papers' },
 }

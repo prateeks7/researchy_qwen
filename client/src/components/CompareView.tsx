@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Send, Timer, Zap, Brain, Sparkles } from 'lucide-react'
+import { Send, Timer, Zap, Brain, Sparkles, KeyRound, X, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { streamCompareModel, saveCompareTurn, type SSEEvent } from '@/lib/api'
-import type { CompareTurn } from '@/types'
+import type { CompareTurn, ModelKey } from '@/types'
 import chatBg from '../../utils/backgrounds/chat.jpg'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-type ModelKey = 'qwen7b' | 'qwen72b' | 'gemini'
 
 interface ColConfig {
   key: ModelKey
@@ -34,23 +32,27 @@ const EMPTY_COL: ColState = { loading: false, toolLog: [], response: null, timin
 // ── Column config ─────────────────────────────────────────────────────────────
 
 const COLUMNS: ColConfig[] = [
-  { key: 'qwen7b',  label: 'Qwen 7B',          sub: 'Fast · OpenRouter',          icon: Zap,      accent: 'border-amber-400/50' },
-  { key: 'qwen72b', label: 'Qwen 72B',          sub: 'Powerful · HuggingFace',     icon: Brain,    accent: 'border-blue-400/50'  },
-  { key: 'gemini',  label: 'Gemini 2.5 Flash',  sub: 'Google · Multimodal',        icon: Sparkles, accent: 'border-purple-400/50' },
+  { key: 'qwen7b',  label: 'Qwen 7B',          sub: 'Fast · selectable backend',    icon: Zap,      accent: 'border-amber-400/50' },
+  { key: 'qwen72b', label: 'Qwen 72B',          sub: 'Deep · selectable backend',    icon: Brain,    accent: 'border-blue-400/50'  },
+  { key: 'gemini',  label: 'Gemini 2.5 Flash',  sub: 'Google · configurable',        icon: Sparkles, accent: 'border-purple-400/50' },
 ]
 
 const TOOL_CONFIG: Record<string, { emoji: string; label: string }> = {
-  search_internal_knowledge:                 { emoji: '⚡', label: 'Checking Vector DB' },
-  search_paper_details:                      { emoji: '🔍', label: 'Reading paper details' },
+  cache_check:                               { emoji: '🌍', label: 'Checking ChromaDB cache' },
+  cache_hit:                                 { emoji: '🌍', label: 'Using ChromaDB cache' },
+  cache_miss:                                { emoji: '❌', label: 'ChromaDB cache miss' },
+  search_internal_knowledge:                 { emoji: '🔍', label: 'Searching knowledge base' },
+  search_paper_details:                      { emoji: '🌍', label: 'Reading ChromaDB raw text' },
   search_arxiv_papers:                       { emoji: '📡', label: 'Searching arXiv' },
-  download_and_parse_arxiv_paper:            { emoji: '📥', label: 'Downloading & parsing paper' },
+  download_and_parse_arxiv_paper:            { emoji: '📥', label: 'Scraping & parsing paper' },
   search_semantic_scholar:                   { emoji: '🎓', label: 'Searching Semantic Scholar' },
   get_paper_citations:                       { emoji: '🔗', label: 'Fetching citations' },
   get_author_papers:                         { emoji: '👤', label: 'Looking up author papers' },
-  download_and_parse_semantic_scholar_paper: { emoji: '📥', label: 'Downloading & parsing paper' },
+  download_and_parse_semantic_scholar_paper: { emoji: '📥', label: 'Scraping & parsing paper' },
   search_pubmed:                             { emoji: '🧬', label: 'Searching PubMed' },
-  download_pubmed_paper:                     { emoji: '📥', label: 'Downloading paper' },
+  download_pubmed_paper:                     { emoji: '📥', label: 'Scraping paper' },
   web_search_tool:                           { emoji: '🌐', label: 'Searching the web' },
+  compare_papers:                            { emoji: '⚖️',  label: 'Comparing papers' },
 }
 
 // Strip [FOLLOW_UP] marker — not relevant in compare view
@@ -217,8 +219,12 @@ interface CompareViewProps {
   token: string
   activeSessionId: string | null
   turns: CompareTurn[]
-  onBeforeSend: (message: string) => Promise<string>   // ensures session exists, returns sessionId
+  onBeforeSend: (message: string) => Promise<string>
   onTurnComplete: (turn: CompareTurn) => void
+  hfToken: string
+  onSetHfToken: (t: string) => void
+  geminiToken: string
+  onSetGeminiToken: (t: string) => void
 }
 
 const INIT_STATES = (): Record<ModelKey, ColState> => ({
@@ -227,11 +233,14 @@ const INIT_STATES = (): Record<ModelKey, ColState> => ({
   gemini: { ...EMPTY_COL },
 })
 
-export function CompareView({ token, activeSessionId, turns, onBeforeSend, onTurnComplete }: CompareViewProps) {
+export function CompareView({ token, activeSessionId, turns, onBeforeSend, onTurnComplete, hfToken, onSetHfToken, geminiToken, onSetGeminiToken }: CompareViewProps) {
   const [input, setInput] = useState('')
   const [colStates, setColStates] = useState<Record<ModelKey, ColState>>(INIT_STATES)
   const [pendingMessage, setPendingMessage] = useState<string | null>(null)
   const [elapsed, setElapsed] = useState(0)
+  const [showKeyModal, setShowKeyModal] = useState(false)
+  const [hfDraft, setHfDraft] = useState('')
+  const [geminiDraft, setGeminiDraft] = useState('')
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const ignoreSessionChangeRef = useRef<string | null>(null)
   const colRefs = {
@@ -298,7 +307,13 @@ export function CompareView({ token, activeSessionId, turns, onBeforeSend, onTur
             const toolLog = [...prev[key].toolLog]
             // Mark the last un-done entry as done (tools run sequentially)
             const idx = toolLog.map((e) => e.done).lastIndexOf(false)
-            if (idx !== -1) toolLog[idx] = { ...toolLog[idx], done: true }
+            if (idx !== -1) {
+              toolLog[idx] = {
+                ...toolLog[idx],
+                name: event.display_name ?? (event.cache_hit ? 'cache_hit' : toolLog[idx].name),
+                done: true,
+              }
+            }
             return { ...prev, [key]: { ...prev[key], toolLog } }
           })
         } else if (event.type === 'done') {
@@ -309,7 +324,7 @@ export function CompareView({ token, activeSessionId, turns, onBeforeSend, onTur
           results[key] = { response: msg, timing: event.timing ?? 0 }
           setCol(key, { loading: false, error: event.message, timing: event.timing ?? 0 })
         }
-      })
+      }, hfToken || undefined, geminiToken || undefined)
     }
 
     await Promise.all(COLUMNS.map((c) => runModel(c.key)))
@@ -330,11 +345,56 @@ export function CompareView({ token, activeSessionId, turns, onBeforeSend, onTur
     setColStates(INIT_STATES())
   }
 
+  function openKeyModal() { setHfDraft(hfToken); setGeminiDraft(geminiToken); setShowKeyModal(true) }
+  function saveKeys() { onSetHfToken(hfDraft.trim()); onSetGeminiToken(geminiDraft.trim()); setShowKeyModal(false) }
+  function clearKeys() { onSetHfToken(''); onSetGeminiToken(''); setHfDraft(''); setGeminiDraft(''); setShowKeyModal(false) }
+
   return (
     <div
-      className="flex flex-col flex-1 h-full overflow-hidden"
+      className="relative flex flex-col flex-1 h-full overflow-hidden"
       style={{ backgroundImage: `url(${chatBg})`, backgroundSize: 'cover', backgroundPosition: 'center' }}
     >
+      {/* API Keys Modal */}
+      {showKeyModal && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white/90 backdrop-blur-md border border-black/10 rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-4 h-4 text-black/60" />
+                <h3 className="text-sm font-semibold text-black">API Keys</h3>
+              </div>
+              <button onClick={() => setShowKeyModal(false)} className="p-1 rounded-lg hover:bg-black/10 transition-colors">
+                <X className="w-4 h-4 text-black/50" />
+              </button>
+            </div>
+            <p className="text-xs text-black/40 mb-4">Memory only — never saved. Re-enter after page refresh.</p>
+
+            <label className="block text-xs font-medium text-black/50 mb-1">HuggingFace API Key</label>
+            <input type="password" value={hfDraft} onChange={(e) => setHfDraft(e.target.value)}
+              placeholder="hf_••••••••••••••••••••" autoFocus
+              className="w-full px-3 py-2 rounded-xl bg-black/5 border border-black/10 text-sm font-mono text-black placeholder:text-black/30 outline-none focus:border-blue-400/60 transition-all mb-3"
+            />
+            <label className="block text-xs font-medium text-black/50 mb-1">Google Gemini API Key</label>
+            <input type="password" value={geminiDraft} onChange={(e) => setGeminiDraft(e.target.value)}
+              placeholder="AIza••••••••••••••••••••"
+              className="w-full px-3 py-2 rounded-xl bg-black/5 border border-black/10 text-sm font-mono text-black placeholder:text-black/30 outline-none focus:border-purple-400/60 transition-all mb-3"
+            />
+
+            <div className="flex gap-2">
+              <button onClick={saveKeys}
+                className="flex-1 h-9 rounded-xl bg-blue-500 hover:bg-blue-400 text-white text-sm font-medium transition-colors flex items-center justify-center gap-1.5">
+                <Check className="w-3.5 h-3.5" /> Save for session
+              </button>
+              {(hfToken || geminiToken ) && (
+                <button onClick={clearKeys}
+                  className="h-9 px-3 rounded-xl bg-red-100 hover:bg-red-200 text-red-600 text-sm font-medium transition-colors">
+                  Clear all
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       {/* 3-column area */}
       <div className="flex flex-1 overflow-hidden divide-x divide-black/10">
         {COLUMNS.map((col) => (
@@ -353,7 +413,24 @@ export function CompareView({ token, activeSessionId, turns, onBeforeSend, onTur
 
       {/* Shared input */}
       <div className="border-t border-black/10 bg-white/20 backdrop-blur-sm px-4 py-3">
-        <form onSubmit={handleSubmit} className="flex items-center gap-3 max-w-3xl mx-auto">
+        <form onSubmit={handleSubmit} className="flex items-center gap-2 max-w-3xl mx-auto">
+          <button
+            type="button"
+            onClick={openKeyModal}
+            title="Set API Keys (HuggingFace · Gemini )"
+            className={cn(
+              'flex-shrink-0 flex items-center gap-1 h-9 px-2.5 rounded-xl text-[11px] font-medium transition-colors',
+              (hfToken || geminiToken )
+                ? 'bg-emerald-100/80 text-emerald-700 hover:bg-emerald-200/80'
+                : 'bg-white/50 text-black/40 hover:bg-white/70 hover:text-black/60 border border-black/10',
+            )}
+          >
+            <KeyRound className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">
+              {[hfToken && 'HF', geminiToken && 'Gemini'].filter(Boolean).join(' · ') || 'Keys'}
+              {(hfToken || geminiToken ) ? ' ✓' : ''}
+            </span>
+          </button>
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}

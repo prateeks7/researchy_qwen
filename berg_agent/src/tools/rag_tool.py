@@ -5,8 +5,9 @@ from src.db.vector_store import search_vector_db, search_vector_db_raw
 def search_internal_knowledge(query: str) -> str:
     """
     Searches your internal knowledge base using keyword relevance and section SUMMARIES.
-    Always call this FIRST before downloading any paper.
-    Returns an overview of relevant sections from previously downloaded papers.
+    Use ONLY for explanation, factual, or comparison intents where you need details
+    about a paper already discussed in this session. Do NOT call this for discovery
+    queries (finding new papers) — go directly to search_arxiv_papers instead.
     Input: a specific question (e.g. 'What datasets were used in Paper X?').
     """
     print(f"🧠 Agent is searching internal knowledge (summaries) for: {query}")

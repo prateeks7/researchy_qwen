@@ -1,6 +1,5 @@
 import requests
 from langchain_core.tools import tool
-from src.tools.utils.pdf_processor import download_and_parse_pdf
 
 _MAX_QUERY_LEN = 200
 
@@ -11,8 +10,8 @@ def _clean_query(query: str) -> str:
 @tool
 def search_semantic_scholar(query: str) -> str:
     """
-    Searches Semantic Scholar for papers AND immediately downloads any open-access full text found.
-    Use this to find papers by topic — full PDFs are downloaded on this single call to avoid rate limits.
+    Searches Semantic Scholar for papers by topic. Returns metadata (title, abstract, IDs, PDF URL).
+    Use this for discovery. To get full text of a specific paper, call download_and_parse_semantic_scholar_paper afterwards.
     Input should be a search topic (e.g., 'Physical AI humanoid' or 'water quality datasets').
     """
     query = _clean_query(query)
@@ -47,19 +46,7 @@ def search_semantic_scholar(query: str) -> str:
                 arxiv_id = item["externalIds"]["ArXiv"]
                 pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
 
-            download_status = "⬜ No open-access PDF — use download_and_parse_semantic_scholar_paper if needed."
-            if pdf_url:
-                try:
-                    print(f"📥 Auto-downloading on search: {title}")
-                    download_and_parse_pdf(
-                        pdf_url=pdf_url,
-                        title=title,
-                        source_id=paper_id,
-                        date_published=f"{year}-01-01" if year else None
-                    )
-                    download_status = "✅ Full paper downloaded and indexed."
-                except Exception as e:
-                    download_status = f"⚠️ Download failed: {str(e)[:100]}"
+            pdf_note = f"📄 PDF: {pdf_url}" if pdf_url else "⬜ No open-access PDF available."
 
             abstract = (item.get("abstract") or "No abstract available.")[:500]
             results.append(
@@ -67,7 +54,7 @@ def search_semantic_scholar(query: str) -> str:
                 f"[{i}] {title}\n"
                 f"    📅 {year}  |  🔑 ID: {paper_id}\n"
                 f"    🔗 {item.get('url', 'No URL')}\n"
-                f"    {download_status}\n"
+                f"    {pdf_note}\n"
                 f"{divider}\n"
                 f"{abstract}...\n"
             )

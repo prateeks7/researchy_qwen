@@ -1,3 +1,5 @@
+export type ModelKey = 'qwen7b' | 'qwen72b' | 'local72b' | 'gemini'
+
 export interface Message {
   id: string
   role: 'user' | 'assistant'
