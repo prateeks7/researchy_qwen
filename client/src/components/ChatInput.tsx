@@ -1,5 +1,5 @@
 import { useState, useRef, KeyboardEvent } from 'react'
-import { Send, Paperclip, Mic } from 'lucide-react'
+import { Send } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface ChatInputProps {
@@ -45,14 +45,6 @@ export function ChatInput({ onSend, disabled = false }: ChatInputProps) {
           'focus-within:border-gray-400/60 focus-within:bg-white/40 transition-all duration-150',
         )}
       >
-        {/* Attach button */}
-        <button
-          className="flex-shrink-0 p-1.5 rounded-lg text-black/30 hover:text-black/60 hover:bg-black/5 transition-all mb-0.5"
-          title="Attach file"
-        >
-          <Paperclip className="w-4 h-4" />
-        </button>
-
         {/* Textarea */}
         <textarea
           ref={textareaRef}
@@ -70,14 +62,6 @@ export function ChatInput({ onSend, disabled = false }: ChatInputProps) {
             'disabled:opacity-50',
           )}
         />
-
-        {/* Mic button */}
-        <button
-          className="flex-shrink-0 p-1.5 rounded-lg text-black/30 hover:text-black/60 hover:bg-black/5 transition-all mb-0.5"
-          title="Voice input"
-        >
-          <Mic className="w-4 h-4" />
-        </button>
 
         {/* Send button */}
         <button

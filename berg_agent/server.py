@@ -19,7 +19,6 @@ from src.auth.oauth import (
     github_auth_url, github_get_user,
     google_auth_url, google_get_user,
 )
-from src.auth.password import hash_password, verify_password
 from src.db.mongo_client import (
     get_or_create_oauth_user,
     create_user, get_user_by_email,
@@ -162,14 +161,6 @@ app.add_middleware(
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
 
-class RegisterRequest(BaseModel):
-    email: str
-    password: str
-
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -268,8 +259,16 @@ def _normalize_agent_output(text: str) -> str:
     return cleaned if cleaned else original
 
 
+_EXPLICIT_WEB_SEARCH = re.compile(
+    r'^\s*(search web|search the web|search the internet|search online|look up online)',
+    re.I,
+)
+
 def _preflight_kb(message: str) -> str | None:
     """Check if relevant papers are already in the vector DB. Returns context or None."""
+    if _EXPLICIT_WEB_SEARCH.search(message):
+        logger.info("❌ ChromaDB cache preflight skipped — user requested explicit web search.")
+        return None
     if _FRESH_DISCOVERY_QUERY.search(message) and not _SPECIFIC_DETAIL_QUERY.search(message):
         logger.info("❌ ChromaDB cache preflight skipped for freshness-sensitive discovery query.")
         return None
@@ -297,10 +296,23 @@ def _run_agent(agent_executor, message: str, history_messages: list, model: str 
     callback = ContextCaptureCallback()
 
     kb_context = _preflight_kb(message)
-    agent_input = (
-        f"[KNOWLEDGE BASE CONTEXT — papers already indexed locally:]\n{kb_context}\n\n{message}"
-        if kb_context else message
-    )
+    if _EXPLICIT_WEB_SEARCH.search(message):
+        # Hard-wire web search — do not inject KB context, do not let agent reroute
+        clean_query = _EXPLICIT_WEB_SEARCH.sub("", message).lstrip(" -–—:").strip()
+        agent_input = (
+            "[MANDATORY — WEB SEARCH ONLY]\n"
+            "The user has explicitly requested a web search. You MUST:\n"
+            "  1. Call web_search_tool with the query below.\n"
+            "  2. Do NOT call search_arxiv_papers, search_semantic_scholar, search_pubmed, "
+            "search_internal_knowledge, or any download tool.\n"
+            "  3. Present the web results directly.\n\n"
+            f"Web search query: {clean_query}"
+        )
+    else:
+        agent_input = (
+            f"[KNOWLEDGE BASE CONTEXT — papers already indexed locally:]\n{kb_context}\n\n{message}"
+            if kb_context else message
+        )
 
     result = agent_executor.invoke(
         {"input": agent_input, "chat_history": chat_history},
@@ -357,10 +369,22 @@ def _run_agent_with(agent_executor, message: str, history_messages: list, model:
     kb_context = _preflight_kb(message)
     if extra_callback is not None and hasattr(extra_callback, "emit_cache_check_done"):
         extra_callback.emit_cache_check_done(bool(kb_context))
-    agent_input = (
-        f"[KNOWLEDGE BASE CONTEXT — papers already indexed locally:]\n{kb_context}\n\n{message}"
-        if kb_context else message
-    )
+    if _EXPLICIT_WEB_SEARCH.search(message):
+        clean_query = _EXPLICIT_WEB_SEARCH.sub("", message).lstrip(" -–—:").strip()
+        agent_input = (
+            "[MANDATORY — WEB SEARCH ONLY]\n"
+            "The user has explicitly requested a web search. You MUST:\n"
+            "  1. Call web_search_tool with the query below.\n"
+            "  2. Do NOT call search_arxiv_papers, search_semantic_scholar, search_pubmed, "
+            "search_internal_knowledge, or any download tool.\n"
+            "  3. Present the web results directly.\n\n"
+            f"Web search query: {clean_query}"
+        )
+    else:
+        agent_input = (
+            f"[KNOWLEDGE BASE CONTEXT — papers already indexed locally:]\n{kb_context}\n\n{message}"
+            if kb_context else message
+        )
 
     result = agent_executor.invoke(
         {"input": agent_input, "chat_history": chat_history},
@@ -393,26 +417,6 @@ def _run_agent_with(agent_executor, message: str, history_messages: list, model:
 
 
 # ── Auth endpoints ────────────────────────────────────────────────────────────
-
-@app.post("/api/auth/register", response_model=TokenResponse, status_code=201)
-async def register(req: RegisterRequest):
-    if len(req.password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
-    if get_user_by_email(req.email):
-        raise HTTPException(status_code=409, detail="An account with this email already exists.")
-    user = create_user(req.email, hash_password(req.password))
-    token = create_token(user["user_id"], user["email"])
-    return TokenResponse(access_token=token)
-
-
-@app.post("/api/auth/login", response_model=TokenResponse)
-async def login(req: LoginRequest):
-    user = get_user_by_email(req.email)
-    if not user or not verify_password(req.password, user["password"]):
-        raise HTTPException(status_code=401, detail="Incorrect email or password.")
-    token = create_token(user["user_id"], user["email"])
-    return TokenResponse(access_token=token)
-
 
 @app.get("/api/auth/me", response_model=UserResponse)
 async def me(current_user: dict = Depends(get_current_user)):
@@ -772,10 +776,22 @@ async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current
             stream_cb.emit_cache_check_start()
             kb_context = _preflight_kb(req.message)
             stream_cb.emit_cache_check_done(bool(kb_context))
-            agent_input = (
-                f"[KNOWLEDGE BASE CONTEXT — papers already indexed locally:]\n{kb_context}\n\n{req.message}"
-                if kb_context else req.message
-            )
+            if _EXPLICIT_WEB_SEARCH.search(req.message):
+                clean_query = _EXPLICIT_WEB_SEARCH.sub("", req.message).lstrip(" -–—:").strip()
+                agent_input = (
+                    "[MANDATORY — WEB SEARCH ONLY]\n"
+                    "The user has explicitly requested a web search. You MUST:\n"
+                    "  1. Call web_search_tool with the query below.\n"
+                    "  2. Do NOT call search_arxiv_papers, search_semantic_scholar, search_pubmed, "
+                    "search_internal_knowledge, or any download tool.\n"
+                    "  3. Present the web results directly.\n\n"
+                    f"Web search query: {clean_query}"
+                )
+            else:
+                agent_input = (
+                    f"[KNOWLEDGE BASE CONTEXT — papers already indexed locally:]\n{kb_context}\n\n{req.message}"
+                    if kb_context else req.message
+                )
 
             result = agent_exec.invoke(
                 {"input": agent_input, "chat_history": chat_history},

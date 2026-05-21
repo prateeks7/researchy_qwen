@@ -18,26 +18,6 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
-interface TokenResponse { access_token: string; token_type: string }
-
-export async function authRegister(email: string, password: string): Promise<TokenResponse> {
-  const res = await fetch(`${API_BASE}/api/auth/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  })
-  return handleResponse<TokenResponse>(res)
-}
-
-export async function authLogin(email: string, password: string): Promise<TokenResponse> {
-  const res = await fetch(`${API_BASE}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  })
-  return handleResponse<TokenResponse>(res)
-}
-
 export async function getMe(token: string): Promise<User> {
   const res = await fetch(`${API_BASE}/api/auth/me`, { headers: authHeaders(token) })
   return handleResponse<User>(res)

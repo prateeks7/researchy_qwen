@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
-import { authLogin, authRegister, getMe } from '@/lib/api'
+import { getMe } from '@/lib/api'
 
 interface User {
   user_id: string
@@ -10,8 +10,6 @@ interface AuthContextValue {
   user: User | null
   token: string | null
   isLoading: boolean
-  login: (email: string, password: string) => Promise<void>
-  register: (email: string, password: string) => Promise<void>
   logout: () => void
 }
 
@@ -56,22 +54,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setIsLoading(false))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const login = useCallback(async (email: string, password: string) => {
-    const { access_token } = await authLogin(email, password)
-    localStorage.setItem('berg_token', access_token)
-    setToken(access_token)
-    const me = await getMe(access_token)
-    setUser(me)
-  }, [])
-
-  const register = useCallback(async (email: string, password: string) => {
-    const { access_token } = await authRegister(email, password)
-    localStorage.setItem('berg_token', access_token)
-    setToken(access_token)
-    const me = await getMe(access_token)
-    setUser(me)
-  }, [])
-
   const logout = useCallback(() => {
     localStorage.removeItem('berg_token')
     setToken(null)
@@ -79,7 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, token, isLoading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, token, isLoading, logout }}>
       {children}
     </AuthContext.Provider>
   )

@@ -1,6 +1,4 @@
-import { useState, type FormEvent } from 'react'
-import { useAuth } from '@/contexts/AuthContext'
-import { Telescope, Search, BrainCircuit, MessageSquare, ShieldCheck } from 'lucide-react'
+import { Search, BrainCircuit, MessageSquare, ShieldCheck } from 'lucide-react'
 import sidebarBg from '../../utils/backgrounds/sidebar.jpg'
 import chatBg from '../../utils/backgrounds/chat.jpg'
 import icon from '../../utils/backgrounds/Icon.png'
@@ -50,30 +48,6 @@ function GitHubIcon() {
 }
 
 export function LoginPage() {
-  const { login, register } = useAuth()
-  const [mode, setMode] = useState<'login' | 'signup'>('login')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault()
-    setError(null)
-    setIsSubmitting(true)
-    try {
-      mode === 'login' ? await login(email, password) : await register(email, password)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Something went wrong.'
-      if (msg.includes('409')) setError('An account with this email already exists.')
-      else if (msg.includes('401')) setError('Incorrect email or password.')
-      else if (msg.includes('400')) setError('Password must be at least 8 characters.')
-      else setError(msg)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
   return (
     <div className="flex h-screen w-screen overflow-hidden">
 
@@ -137,23 +111,22 @@ export function LoginPage() {
         style={{ backgroundImage: `url(${chatBg})`, backgroundSize: 'cover', backgroundPosition: 'center' }}
       >
 
-        {/* Card — sidebar.jpg interior */}
+        {/* Card */}
         <div
           className="relative z-10 w-full max-w-[340px] rounded-2xl shadow-2xl border border-black/10"
           style={{ backgroundImage: `url(${sidebarBg})`, backgroundSize: 'cover', backgroundPosition: 'center' }}
         >
-          {/* Card content */}
           <div className="relative z-10 p-7">
 
             {/* Card header */}
-            <div className="flex flex-col items-center gap-2 mb-6">
+            <div className="flex flex-col items-center gap-2 mb-8">
               <img src={icon} alt="Berg" className="w-11 h-11 rounded-full object-cover shadow" />
-              <p className="text-black font-semibold text-base">Welcome back</p>
+              <p className="text-black font-semibold text-base">Welcome to Berg</p>
               <p className="text-black/40 text-xs">Sign in to your research account</p>
             </div>
 
-            {/* OAuth */}
-            <div className="flex flex-col gap-2 mb-5">
+            {/* OAuth buttons */}
+            <div className="flex flex-col gap-3">
               <a
                 href={`${API_BASE}/api/auth/google`}
                 className="flex items-center justify-center gap-2.5 py-2.5 rounded-lg bg-white border border-black/15 hover:bg-black/5 text-black text-sm font-medium transition-all shadow-sm"
@@ -168,83 +141,7 @@ export function LoginPage() {
               </a>
             </div>
 
-            {/* Divider */}
-            <div className="flex items-center gap-3 mb-4">
-              <div className="flex-1 h-px bg-black/10" />
-              <span className="text-black/30 text-xs">or continue with email</span>
-              <div className="flex-1 h-px bg-black/10" />
-            </div>
-
-            {/* Tab toggle */}
-            <div className="flex rounded-lg bg-black/8 p-1 mb-4">
-              {(['login', 'signup'] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => { setMode(m); setError(null) }}
-                  className={`flex-1 py-1.5 rounded-md text-sm font-medium transition-all duration-150 ${
-                    mode === m ? 'bg-white text-black shadow-sm' : 'text-black/40 hover:text-black/60'
-                  }`}
-                >
-                  {m === 'login' ? 'Sign In' : 'Sign Up'}
-                </button>
-              ))}
-            </div>
-
-            {/* Form */}
-            <form onSubmit={handleSubmit} className="space-y-3">
-              <div>
-                <label className="block text-black/55 text-xs font-medium mb-1.5">Email</label>
-                <input
-                  type="email"
-                  required
-                  autoComplete="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  className="w-full px-3 py-2.5 rounded-lg bg-white border border-black/15 text-black placeholder:text-black/25 text-sm outline-none focus:border-black/35 transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-black/55 text-xs font-medium mb-1.5">Password</label>
-                <input
-                  type="password"
-                  required
-                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder={mode === 'signup' ? 'At least 8 characters' : '••••••••'}
-                  className="w-full px-3 py-2.5 rounded-lg bg-white border border-black/15 text-black placeholder:text-black/25 text-sm outline-none focus:border-black/35 transition-all"
-                />
-              </div>
-
-              {error && (
-                <p className="text-red-600 text-xs bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                  {error}
-                </p>
-              )}
-
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-black/85 hover:bg-black text-white text-sm font-medium transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed mt-1"
-              >
-                {isSubmitting ? (
-                  <span className="flex gap-1">
-                    {[0, 150, 300].map((d) => (
-                      <span key={d} className="w-1.5 h-1.5 rounded-full bg-white animate-bounce" style={{ animationDelay: `${d}ms` }} />
-                    ))}
-                  </span>
-                ) : (
-                  <>
-                    <Telescope className="w-4 h-4" />
-                    {mode === 'login' ? 'Sign In' : 'Create Account'}
-                  </>
-                )}
-              </button>
-            </form>
-
-            <p className="text-black/25 text-[10px] text-center mt-5">
+            <p className="text-black/25 text-[10px] text-center mt-7">
               Powered by Qwen · Berg Agent
             </p>
           </div>

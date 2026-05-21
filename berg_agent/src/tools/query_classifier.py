@@ -7,7 +7,9 @@ Intent categories:
 - explanation: Explain this paper / what are the conclusions
 - comparison: Compare two or more papers
 - factual: What did this paper use/find (requires extraction from paper)
+- extraction: Get tables / figures / sections / equations from a specific paper
 - citation_lookup: Find papers that cite this / by this author
+- web_search: User explicitly asks to search the web / internet
 - hybrid: Multiple intents in one query (e.g., find AND compare)
 - unknown: Doesn't fit standard categories
 """
@@ -26,7 +28,12 @@ INTENT CATEGORIES:
 - explanation: "Explain this paper", "Summarize this paper", "What are the conclusions"
 - comparison: "Compare X and Y", "Which is better", "Difference between X and Y"
 - factual: "What datasets did this paper use", "What results did they get", "What methods"
+- extraction: "Get tables from paper X", "Show figures in paper X", "Extract section 3",
+  "Get equations from", "Show me the results table", "List all tables/figures"
 - citation_lookup: "Papers that cite this", "Papers by this author", "Who cited this"
+- web_search: Query starts with "Search Web" / "search the web" / "search the internet",
+  or explicitly asks to look something up online (e.g. journal reviews, model docs,
+  GitHub repos, conference pages)
 - hybrid: Multiple intents (e.g., find papers AND compare them AND summarize)
 - unknown: Doesn't fit above categories
 
@@ -40,7 +47,7 @@ def classify_query(query: str) -> str:
     Classify user query intent to route to appropriate workflow.
 
     Returns one of: discovery, recommendation, explanation, comparison, factual,
-    citation_lookup, hybrid, unknown
+    extraction, citation_lookup, web_search, hybrid, unknown
     """
     print(f"🏷️ Classifying query: {query[:80]}...")
     llm = get_llm("7b")  # Fast classifier model

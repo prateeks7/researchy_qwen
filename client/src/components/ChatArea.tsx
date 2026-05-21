@@ -397,15 +397,8 @@ function ModelPicker({ models, selected, onSelect, disabled, localAvailable, cla
 // ── Empty state ───────────────────────────────────────────────────────────────
 
 function EmptyState() {
-  const suggestions = [
-    'Summarize recent papers on RAG architectures',
-    'Find citations for the original BERT paper',
-    'What are the key findings in chain-of-thought research?',
-    'Compare GPT-4 and Llama 3 on reasoning benchmarks',
-  ]
-
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-8 px-6 py-10">
+    <div className="flex flex-col items-center justify-center h-full gap-4 px-6 py-10">
       <div className="text-center space-y-3">
         <div className="w-16 h-16 rounded-2xl bg-white/30 border border-black/10 flex items-center justify-center mx-auto backdrop-blur-sm">
           <Telescope className="w-8 h-8 text-black/60" />
@@ -415,22 +408,6 @@ function EmptyState() {
           Your AI-powered research assistant. Ask me about academic papers, citations, and research topics.
         </p>
       </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-2xl">
-        {suggestions.map((s) => (
-          <SuggestionCard key={s} text={s} />
-        ))}
-      </div>
     </div>
-  )
-}
-
-function SuggestionCard({ text }: { text: string }) {
-  return (
-    <button className="text-left px-4 py-3 rounded-xl bg-white/25 border border-black/10 hover:bg-white/40 hover:border-black/20 transition-all duration-150 backdrop-blur-sm group">
-      <p className="text-black/65 font-sans group-hover:text-black text-sm leading-snug transition-colors">
-        {text}
-      </p>
-    </button>
   )
 }
