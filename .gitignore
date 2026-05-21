@@ -1,25 +1,61 @@
 # ── Secrets ────────────────────────────────────────────────
 .env
+.env.*
+*.pem
+*.key
 
-# ── Python ────────────────────────────────────────────────
+# ── Python ─────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+.Python
 .nlp/
-
-# ── Node ──────────────────────────────────────────────────
-node_modules/
+venv/
+env/
+.venv/
+*.egg-info/
 dist/
+build/
+.eggs/
+
+# ── Node ───────────────────────────────────────────────────
+node_modules/
+client/dist/
 *.tsbuildinfo
 
-# ── Local data (auto-generated) ───────────────────────────
+# ── Local data (auto-generated, can be large) ──────────────
 berg_agent/chroma_db/
 berg_agent/papers/
 
-# ── OS junk ───────────────────────────────────────────────
+# ── Local LLM model weights (can be tens of GBs) ───────────
+models/
+*.safetensors
+*.bin
+*.gguf
+*.ggml
+*.pt
+*.pth
+
+# ── Logs ───────────────────────────────────────────────────
+*.log
+logs/
+
+# ── OS junk ────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# ── IDE ───────────────────────────────────────────────────
+# ── IDE ────────────────────────────────────────────────────
 .vscode/
 .idea/
+*.swp
+*.swo
+
+# ── Jupyter (if used for experimentation) ──────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Test / evaluation artifacts ────────────────────────────
+evaluation_results/
+*.json.bak
