@@ -15,7 +15,15 @@ def _api_key_for(base_url: str, configured_key: str, required_name: str) -> str:
         return configured_key
     if "localhost" in base_url or "127.0.0.1" in base_url:
         return "local-not-needed"
-    raise ValueError(f"{required_name} not set")
+    # Make the error informative so users know to enter the key in the UI
+    # or set the env var, rather than just seeing a cryptic "not set".
+    logger.error(
+        "API key resolution failed: %s. base_url=%s. "
+        "Tried: explicit arg → thread-local → env var. All empty. "
+        "Either enter the key in the UI's API Keys modal, or set the env var.",
+        required_name, base_url,
+    )
+    raise ValueError(f"{required_name} not set — enter it in the UI or set the env var")
 
 
 def get_llm(model: str = "72b", hf_token: str | None = None, gemini_token: str | None = None) -> ChatOpenAI:

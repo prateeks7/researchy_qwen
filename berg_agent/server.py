@@ -115,6 +115,12 @@ async def _get_agent_for_request(
     """
     if user_hf_token or user_gemini_token:
         def _build():
+            # Set thread-local on this worker thread so any get_llm() call during
+            # agent construction (or any code path the build accidentally triggers)
+            # finds the user's tokens. Without this, a build-time get_llm() with
+            # no explicit token args would fall back to env vars and fail.
+            from src.tools.model_context import apply_thread_context
+            apply_thread_context(model_name, user_hf_token, user_gemini_token)
             from src.agent import get_research_agent
             return get_research_agent(
                 model_name,
@@ -308,11 +314,21 @@ def _preflight_kb(message: str) -> str | None:
         return None
 
 
-def _run_agent(agent_executor, message: str, history_messages: list, model: str = "72b") -> str:
+def _run_agent(
+    agent_executor,
+    message: str,
+    history_messages: list,
+    model: str = "72b",
+    hf_token: str | None = None,
+    gemini_token: str | None = None,
+) -> str:
     from src.callbacks import ContextCaptureCallback
-    from src.tools.model_context import set_model
+    from src.tools.model_context import apply_thread_context
 
-    set_model(model)
+    # Apply user tokens + model to thread-local so tools (classify_query,
+    # synthesize_findings, pdf_processor, compare_papers) can resolve tokens
+    # via get_hf_token()/get_gemini_token() at runtime.
+    apply_thread_context(model, hf_token, gemini_token)
 
     chat_history = _format_history(history_messages)
     callback = ContextCaptureCallback()
@@ -375,11 +391,19 @@ def _sync_db():
     sync_mongo_to_chroma()
 
 
-def _run_agent_with(agent_executor, message: str, history_messages: list, model: str = "72b", extra_callback=None) -> str:
+def _run_agent_with(
+    agent_executor,
+    message: str,
+    history_messages: list,
+    model: str = "72b",
+    extra_callback=None,
+    hf_token: str | None = None,
+    gemini_token: str | None = None,
+) -> str:
     """Run a specific agent executor (for compare mode)."""
     from src.callbacks import ContextCaptureCallback
-    from src.tools.model_context import set_model
-    set_model(model)
+    from src.tools.model_context import apply_thread_context
+    apply_thread_context(model, hf_token, gemini_token)
     chat_history = _format_history(history_messages)
     ctx_cb = ContextCaptureCallback()
     callbacks = [ctx_cb]
@@ -666,11 +690,12 @@ async def compare_stream_endpoint(
         cb = StreamingCallback(queue, loop)
 
         def _run_with_tokens():
-            from src.tools.model_context import set_model, set_hf_token, set_gemini_token
-            set_model(model_name)
-            set_hf_token(cmp_hf_token)
-            set_gemini_token(cmp_gemini_token)
-            return _run_agent_with(agent_exec, req.message, history, model_name, cb)
+            from src.tools.model_context import apply_thread_context
+            apply_thread_context(model_name, cmp_hf_token, cmp_gemini_token)
+            return _run_agent_with(
+                agent_exec, req.message, history, model_name, cb,
+                hf_token=cmp_hf_token, gemini_token=cmp_gemini_token,
+            )
 
         future = loop.run_in_executor(_executor, _run_with_tokens)
 
@@ -773,10 +798,8 @@ async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current
         ctx_cb = ContextCaptureCallback()
 
         def _run():
-            from src.tools.model_context import set_model, set_hf_token, set_gemini_token
-            set_model(model_name)
-            set_hf_token(user_hf_token)
-            set_gemini_token(user_gemini_token)
+            from src.tools.model_context import apply_thread_context
+            apply_thread_context(model_name, user_hf_token, user_gemini_token)
             chat_history = _format_history(history)
 
             stream_cb.emit_cache_check_start()
@@ -945,9 +968,12 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user))
 
     loop = asyncio.get_event_loop()
     try:
-        future = loop.run_in_executor(
-            _executor, _run_agent, agent_exec, req.message, session["messages"], model_name
+        import functools
+        fn = functools.partial(
+            _run_agent, agent_exec, req.message, session["messages"], model_name,
+            hf_token=user_hf_token, gemini_token=user_gemini_token,
         )
+        future = loop.run_in_executor(_executor, fn)
         response = await asyncio.wait_for(future, timeout=_AGENT_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Query took too long. Try asking about one paper at a time.")

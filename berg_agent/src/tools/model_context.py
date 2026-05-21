@@ -33,3 +33,21 @@ def set_together_token(token: str | None) -> None:
 
 def get_together_token() -> str | None:
     return getattr(_local, 'together_token', None)
+
+
+def apply_thread_context(
+    model: str,
+    hf_token: str | None = None,
+    gemini_token: str | None = None,
+) -> None:
+    """
+    Set ALL token thread-local values in one call. Use at the top of every
+    worker-thread function so tools called by the agent can resolve tokens
+    via thread-local without relying on env vars.
+
+    Passing None explicitly *clears* any stale token from a prior request
+    that may have been served by the same worker thread.
+    """
+    _local.model = model
+    _local.hf_token = hf_token
+    _local.gemini_token = gemini_token
