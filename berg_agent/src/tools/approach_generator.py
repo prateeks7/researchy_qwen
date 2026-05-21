@@ -49,8 +49,9 @@ def generate_approach(query: str) -> str:
 
     Returns a step-by-step strategy the agent should follow.
     """
+    from src.tools.model_context import get_model
     print(f"🔄 Generating custom approach for: {query[:80]}...")
-    llm = get_llm("72b")  # Full model for reasoning
+    llm = get_llm(get_model() or "72b")  # Use active model (respects user's selected model)
     chain = _APPROACH_PROMPT | llm | StrOutputParser()
     try:
         approach = chain.invoke({"query": query})

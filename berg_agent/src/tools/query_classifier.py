@@ -49,8 +49,12 @@ def classify_query(query: str) -> str:
     Returns one of: discovery, recommendation, explanation, comparison, factual,
     extraction, citation_lookup, web_search, hybrid, unknown
     """
+    from src.tools.model_context import get_model
     print(f"🏷️ Classifying query: {query[:80]}...")
-    llm = get_llm("7b")  # Fast classifier model
+    active = get_model() or "7b"
+    # Use 7b for HF-based models (cheaper/faster); use active model for Gemini/local
+    classifier_model = "7b" if active in ("72b", "7b") else active
+    llm = get_llm(classifier_model)
     chain = _CLASSIFIER_PROMPT | llm
     try:
         result = chain.invoke({"query": query})

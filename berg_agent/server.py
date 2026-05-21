@@ -103,6 +103,28 @@ def _build_agent(model: str):
     return get_research_agent(model)
 
 
+async def _get_agent_for_request(
+    model_name: str,
+    user_hf_token: str | None,
+    user_gemini_token: str | None,
+):
+    """
+    Always build a fresh agent when the user supplied any API token via the UI.
+    Fall back to the cached agent only when no user tokens are present (relies on .env).
+    This ensures the user's UI-entered keys are always used instead of env vars.
+    """
+    if user_hf_token or user_gemini_token:
+        def _build():
+            from src.agent import get_research_agent
+            return get_research_agent(
+                model_name,
+                hf_token=user_hf_token,
+                gemini_token=user_gemini_token,
+            )
+        return await asyncio.get_event_loop().run_in_executor(_executor, _build)
+    return await _ensure_agent(model_name)
+
+
 def _remember_agent(model: str, agent_exec):
     global _agent, _agent_7b, _agent_gemini
     _agents[model] = agent_exec
@@ -605,15 +627,7 @@ async def compare_stream_endpoint(
     cmp_hf_token = req.hf_token or None
     cmp_gemini_token = req.gemini_token or None
     try:
-        if (cmp_hf_token and model_name == "72b") or \
-           (cmp_gemini_token and model_name == "gemini-flash") or \
-           (cmp_hf_token and model_name == "7b"):
-            def _build_cmp():
-                from src.agent import get_research_agent
-                return get_research_agent(model_name, hf_token=cmp_hf_token, gemini_token=cmp_gemini_token)
-            agent_exec = await asyncio.get_event_loop().run_in_executor(_executor, _build_cmp)
-        else:
-            agent_exec = await _ensure_agent(model_name)
+        agent_exec = await _get_agent_for_request(model_name, cmp_hf_token, cmp_gemini_token)
     except Exception as e:
         _err_msg = str(e)
         async def _err():
@@ -733,15 +747,7 @@ async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current
     user_hf_token = req.hf_token or None
     user_gemini_token = req.gemini_token or None
     try:
-        if (user_hf_token and model_name == "72b") or \
-           (user_gemini_token and model_name == "gemini-flash") or \
-           (user_hf_token and model_name == "7b"):
-            def _build_with_token():
-                from src.agent import get_research_agent
-                return get_research_agent(model_name, hf_token=user_hf_token, gemini_token=user_gemini_token)
-            agent_exec = await asyncio.get_event_loop().run_in_executor(_executor, _build_with_token)
-        else:
-            agent_exec = await _ensure_agent(model_name)
+        agent_exec = await _get_agent_for_request(model_name, user_hf_token, user_gemini_token)
     except Exception as e:
         _err = str(e)
         async def _agent_error():
@@ -921,8 +927,10 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user))
         append_message(req.session_id, "assistant", limit_refusal)
         return ChatResponse(response=limit_refusal)
 
+    user_hf_token = req.hf_token or None
+    user_gemini_token = req.gemini_token or None
     try:
-        agent_exec = await _ensure_agent(model_name)
+        agent_exec = await _get_agent_for_request(model_name, user_hf_token, user_gemini_token)
     except Exception as e:
         logger.error("Agent load error for %s: %s", model_name, e)
         raise HTTPException(status_code=503, detail=str(e))

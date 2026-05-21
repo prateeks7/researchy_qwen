@@ -56,8 +56,9 @@ def synthesize_findings(
     Returns:
         Synthesized answer with specific items extracted from papers
     """
+    from src.tools.model_context import get_model
     print(f"🧩 Synthesizing findings for: {original_question[:80]}...")
-    llm = get_llm("72b")
+    llm = get_llm(get_model() or "72b")
     chain = _SYNTHESIZE_PROMPT | llm | StrOutputParser()
     try:
         synthesis = chain.invoke({
