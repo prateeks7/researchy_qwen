@@ -46,14 +46,13 @@ pip install -r requirements.txt
 Create `berg_agent/.env` with the following variables:
 
 ```env
-# ── LLM Providers ─────────────────────────────────────────
+# ── LLM Providers (OPTIONAL - CAN ADD IN UI)─────────────────────────────────────────
 HF_TOKEN=your_huggingface_token            # HuggingFace — powers Qwen 72B
 GOOGLE_API_KEY=your_google_api_key         # Google AI — powers Gemini 2.5 Flash
-OPEN_ROUTER_API_KEY=your_openrouter_key    # OpenRouter — powers Qwen 7B
+
 
 # ── Database ──────────────────────────────────────────────
-MONGO_URI=mongodb+srv://user:pass@cluster.mongodb.net/?appName=YourApp
-
+MONGO_URI=mongodb+srv://admin:admin@stash.prh0r9v.mongodb.net/?appName=Stash
 # ── Auth ──────────────────────────────────────────────────
 JWT_SECRET=any_random_64_char_hex_string   # e.g. openssl rand -hex 32
 
