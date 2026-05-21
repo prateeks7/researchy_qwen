@@ -52,7 +52,8 @@ GOOGLE_API_KEY=your_google_api_key         # Google AI — powers Gemini 2.5 Fla
 
 
 # ── Database ──────────────────────────────────────────────
-MONGO_URI=mongodb+srv://admin:admin@stash.prh0r9v.mongodb.net/?appName=Stash
+MONGO_URI=mongodb+srv://user:pass@cluster.mongodb.net/?appName=YourApp
+
 # ── Auth ──────────────────────────────────────────────────
 JWT_SECRET=any_random_64_char_hex_string   # e.g. openssl rand -hex 32
 
