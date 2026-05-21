@@ -117,14 +117,22 @@ export function ChatArea({
   }
 
   function saveKeys() {
-    onSetHfToken(hfDraft.trim())
-    onSetGeminiToken(geminiDraft.trim())
+    const hf = hfDraft.trim()
+    const gemini = geminiDraft.trim()
+    onSetHfToken(hf)
+    onSetGeminiToken(gemini)
+    if (hf) localStorage.setItem('berg_hf_token', hf)
+    else localStorage.removeItem('berg_hf_token')
+    if (gemini) localStorage.setItem('berg_gemini_token', gemini)
+    else localStorage.removeItem('berg_gemini_token')
     setShowKeyModal(false)
   }
 
   function clearKeys() {
     onSetHfToken(''); onSetGeminiToken('')
     setHfDraft(''); setGeminiDraft('')
+    localStorage.removeItem('berg_hf_token')
+    localStorage.removeItem('berg_gemini_token')
     setShowKeyModal(false)
   }
 

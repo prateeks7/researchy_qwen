@@ -28,8 +28,8 @@ function ChatApp() {
   const [chatToolLog, setChatToolLog] = useState<ToolLogEntry[]>([])
   const [isMuted, setIsMuted] = useState(false)
   const [selectedModel, setSelectedModel] = useState<ModelKey>('qwen72b')
-  const [hfToken, setHfToken] = useState('')
-  const [geminiToken, setGeminiToken] = useState('')
+  const [hfToken, setHfToken] = useState(() => localStorage.getItem('berg_hf_token') ?? '')
+  const [geminiToken, setGeminiToken] = useState(() => localStorage.getItem('berg_gemini_token') ?? '')
   const [localAvailable, setLocalAvailable] = useState<boolean | null>(null)
 
   // ── Compare state ─────────────────────────────────────────────────────────
